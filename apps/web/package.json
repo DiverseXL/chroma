@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@chroma/core": "workspace:*",
+    "@chroma/db": "workspace:*",
     "next": "^15",
     "react": "^19",
     "react-dom": "^19"

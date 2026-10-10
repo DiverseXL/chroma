@@ -1,0 +1,118 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  DEGRADED
+}
+
+enum NodeStatus {
+  PENDING
+  READY
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+  REGENERATING
+}
+
+enum NodeKind {
+  PLAN
+  STYLE_ANALYSIS
+  PROMPT_COMPILE
+  IMAGE_GENERATE
+  IMAGE_EDIT
+  CONSISTENCY_CHECK
+  CRITIQUE
+  GATE
+  COMPOSE
+}
+
+enum ArtifactKind {
+  IMAGE
+  JSON
+  TEXT
+}
+
+model Run {
+  id          String     @id @default(cuid())
+  brief       String
+  status      RunStatus
+  createdAt   DateTime   @default(now())
+  completedAt DateTime?
+  degraded    Boolean    @default(false)
+  nodes       Node[]
+  edges       Edge[]
+  events      Event[]
+}
+
+model Node {
+  id          String      @id
+  runId       String
+  kind        NodeKind
+  status      NodeStatus
+  label       String
+  inputJson   Json
+  outputJson  Json?
+  attempts    Int         @default(0)
+  maxAttempts Int
+  createdAt   DateTime    @default(now())
+  startedAt   DateTime?
+  endedAt     DateTime?
+  run         Run         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  artifacts   Artifact[]
+
+  @@index([runId, status])
+}
+
+model Edge {
+  id         String @id @default(cuid())
+  runId      String
+  fromNodeId String
+  toNodeId   String
+  fromPort   String
+  toPort     String
+  run        Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+}
+
+model Artifact {
+  id         String       @id @default(cuid())
+  nodeId     String
+  kind       ArtifactKind
+  mimeType   String
+  storageKey String
+  sha256     String
+  width      Int?
+  height     Int?
+  metadata   Json?
+  createdAt  DateTime     @default(now())
+  node       Node         @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId])
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  runId     String
+  nodeId    String?
+  type      String
+  payload   Json
+  sequence  Int
+  createdAt DateTime @default(now())
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, sequence])
+  @@index([runId, sequence])
+}

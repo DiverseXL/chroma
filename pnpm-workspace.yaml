@@ -5,4 +5,8 @@ packages:
 # unrs-resolver's postinstall only links the prebuilt napi-rs binding for the
 # current platform; it is required by eslint's import resolver.
 allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  esbuild: true
+  prisma: true
   unrs-resolver: true
