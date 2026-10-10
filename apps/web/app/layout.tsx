@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Chroma",
-  description: "Chroma - provider verification scaffold",
+  title: "Chroma — AI Creative Director",
+  description:
+    "A multi-agent image generation system that turns a brief into a coherent image set.",
 };
 
 export default function RootLayout({
