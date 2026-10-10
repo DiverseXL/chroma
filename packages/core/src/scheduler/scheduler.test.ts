@@ -152,13 +152,24 @@ describe("Scheduler", () => {
   it("runs fan-out graph concurrently (assert wall-clock < serial time)", async () => {
     const db = createMockDb();
     const eventBus = new EventBus({ db });
+    let activeGenerations = 0;
+    let maxActiveGenerations = 0;
 
     class DelayAdapter extends MockAdapter {
       override async generateImage(
         req: Parameters<MockAdapter["generateImage"]>[0],
       ) {
-        await new Promise((r) => setTimeout(r, 60));
-        return super.generateImage(req);
+        activeGenerations++;
+        maxActiveGenerations = Math.max(
+          maxActiveGenerations,
+          activeGenerations,
+        );
+        try {
+          await new Promise((r) => setTimeout(r, 60));
+          return await super.generateImage(req);
+        } finally {
+          activeGenerations--;
+        }
       }
     }
 
@@ -224,13 +235,10 @@ describe("Scheduler", () => {
     };
 
     const graph = compileGraph(spec);
-    const start = Date.now();
     const result = await scheduler.run("run-fanout", graph);
-    const elapsed = Date.now() - start;
 
     expect(result.status).toBe("SUCCEEDED");
-    // Serial would take at least 3 * 60ms = 180ms. Concurrent with capacity 4 completes in under 150ms.
-    expect(elapsed).toBeLessThan(160);
+    expect(maxActiveGenerations).toBe(3);
   });
 
   it("retries on transient failure and then succeeds", async () => {
