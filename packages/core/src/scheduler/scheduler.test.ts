@@ -69,6 +69,11 @@ function createMockDb(): PrismaClient {
         artifacts.push(record);
         return record;
       },
+      // readArtifact() resolves artifacts through findUnique, so the mock must
+      // expose it; the record keeps the storageKey writeArtifact() set.
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        return artifacts.find((a) => a.id === where.id) ?? null;
+      },
       findMany: async () => artifacts,
     },
     event: {

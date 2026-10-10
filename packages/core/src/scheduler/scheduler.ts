@@ -1,9 +1,13 @@
 import { PrismaClient } from "@chroma/db";
 import { EventBus } from "../events/bus.js";
 import { getExecutor } from "../executors/index.js";
+import type { ProviderSet } from "../executors/types.js";
 import type { CompiledGraph } from "../graph/compiler.js";
 import type { ProviderAdapter } from "../provider/adapter.js";
-import { ProviderRateLimitError } from "../provider/adapter.js";
+import {
+  ProviderContentFilterError,
+  ProviderRateLimitError,
+} from "../provider/adapter.js";
 import { writeArtifact } from "../storage/local.js";
 import type {
   Artifact,
@@ -25,9 +29,22 @@ export interface RunResult {
 
 /**
  * Configuration options for the Scheduler.
+ *
+ * Pass either `providers` (capability-keyed set) or the legacy `adapter`
+ * (single adapter mirrored into all three capability slots). When both are
+ * present, `providers` takes precedence.
  */
 export interface SchedulerOptions {
-  adapter: ProviderAdapter;
+  /**
+   * Capability-keyed provider adapters (preferred over the legacy `adapter` field).
+   */
+  providers?: ProviderSet;
+  /**
+   * Legacy single-adapter shortcut retained for Step 2 tests.
+   * When supplied without `providers`, the adapter is mirrored into all three
+   * capability slots.
+   */
+  adapter?: ProviderAdapter;
   eventBus: EventBus;
   db: PrismaClient;
   concurrency?: number;
@@ -87,7 +104,7 @@ export function calculateBackoffMs(
  * Topological scheduler that executes a compiled graph with concurrency controls, retries, and dynamic regeneration.
  */
 export class Scheduler {
-  private readonly adapter: ProviderAdapter;
+  private readonly providers: ProviderSet;
   private readonly eventBus: EventBus;
   private readonly db: PrismaClient;
   private readonly concurrency: number;
@@ -99,7 +116,22 @@ export class Scheduler {
    * @param opts Scheduler configuration and dependencies.
    */
   constructor(opts: SchedulerOptions) {
-    this.adapter = opts.adapter;
+    // Build the providers set. When an explicit providers object is given it
+    // wins; otherwise the legacy adapter is mirrored into all three slots so
+    // Step 2 tests that pass a single MockAdapter continue to work unchanged.
+    if (opts.providers) {
+      this.providers = opts.providers;
+    } else if (opts.adapter) {
+      this.providers = {
+        image: opts.adapter,
+        vision: opts.adapter,
+        text: opts.adapter,
+      };
+    } else {
+      throw new Error(
+        "Scheduler: supply either providers or adapter in SchedulerOptions",
+      );
+    }
     this.eventBus = opts.eventBus;
     this.db = opts.db;
     this.concurrency = opts.concurrency ?? 4;
@@ -379,7 +411,9 @@ export class Scheduler {
         const artifactsWritten: Artifact[] = [];
 
         const ctx = {
-          adapter: this.adapter,
+          providers: this.providers,
+          // Retained for backward compatibility: mirrors the image adapter.
+          adapter: this.providers.image,
           db: this.db,
           runId,
           nodeId: node.id,
@@ -576,10 +610,13 @@ export class Scheduler {
         };
       } catch (error) {
         const isRateLimit = error instanceof ProviderRateLimitError;
+        // Content-filter rejections are deterministic: the identical prompt
+        // would be rejected again, so this failure is terminal on first sight.
+        const isNonRetryable = error instanceof ProviderContentFilterError;
         const errorMessage =
           error instanceof Error ? error.message : String(error);
 
-        if (attempts < maxAttempts) {
+        if (!isNonRetryable && attempts < maxAttempts) {
           const backoffDelay = calculateBackoffMs(
             node.kind,
             attempts,

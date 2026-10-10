@@ -112,6 +112,22 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  packages/providers:
+    dependencies:
+      '@chroma/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.5
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.32.0)
+
 packages:
 
   '@alloc/quick-lru@5.3.0':

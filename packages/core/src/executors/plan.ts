@@ -1,17 +1,48 @@
+import { compileGraph } from "../graph/compiler.js";
+import { ProviderError } from "../provider/adapter.js";
 import type { GraphSpec } from "../types/index.js";
 import type { ExecutionContext } from "./types.js";
 
 /**
- * Generates a GraphSpec for a 2-panel storyboard given a user brief.
- * PLAN -> STYLE_ANALYSIS -> (PROMPT_COMPILE -> IMAGE_GENERATE) x 2 -> COMPOSE.
+ * Verbatim system prompt delivered to the Planner agent.
+ * This string must not be altered without updating the corresponding tests.
+ */
+const PLANNER_SYSTEM_PROMPT =
+  "You are the Planner agent in Chroma, a multi-agent image generation system. " +
+  "Given a creative brief, output a directed acyclic graph of nodes that will satisfy it. " +
+  "The graph must include exactly one PLAN node (the root), at least one STYLE_ANALYSIS node, " +
+  "one PROMPT_COMPILE node per panel, one IMAGE_GENERATE node per panel, " +
+  "one CRITIQUE node per IMAGE_GENERATE node, one GATE node per CRITIQUE node, " +
+  "and exactly one COMPOSE node at the end. Panels run in parallel. " +
+  "Return strict JSON matching this shape: { nodes: NodeSpec[], edges: EdgeSpec[] } " +
+  "where NodeSpec = { id, kind, label, inputs: Record<string,string>, outputs: string[] } " +
+  "and EdgeSpec = { from, to, fromPort, toPort }. " +
+  "Node ids must be unique and human-readable (e.g. panel1_prompt). " +
+  "Do not include any text outside the JSON.";
+
+/**
+ * Input payload expected by the Plan executor.
+ */
+export interface PlanInput {
+  brief?: string;
+  panelCount?: number;
+}
+
+/**
+ * Generates a GraphSpec by asking the Planner agent (Gemini text) to produce a
+ * DAG satisfying the creative brief.
  *
- * @param input Brief or parameters for planning.
+ * The output JSON is validated by GraphCompiler. On validation failure the
+ * prompt is retried once with the error appended. If validation fails twice,
+ * a ProviderError with code "planner_output_invalid" is thrown.
+ *
+ * @param input Creative brief and optional panel count.
  * @param ctx Node execution context.
- * @returns Deterministic storyboard GraphSpec.
+ * @returns Validated GraphSpec produced by the Planner agent.
  */
 export async function executePlan(
-  input: { brief?: string } | string | unknown,
-  _ctx: ExecutionContext,
+  input: PlanInput | string | unknown,
+  ctx: ExecutionContext,
 ): Promise<GraphSpec> {
   const briefText =
     typeof input === "string"
@@ -20,104 +51,46 @@ export async function executePlan(
         ? String((input as { brief?: unknown }).brief ?? "Storyboard")
         : "Storyboard";
 
-  return {
-    nodes: [
-      {
-        id: "plan-0",
-        kind: "PLAN",
-        label: `Plan: ${briefText}`,
-        inputs: {},
-        outputs: ["storyboard"],
-      },
-      {
-        id: "style-1",
-        kind: "STYLE_ANALYSIS",
-        label: "Style Analysis",
-        inputs: { plan: "plan-0.storyboard" },
-        outputs: ["style"],
-      },
-      {
-        id: "prompt-panel-1",
-        kind: "PROMPT_COMPILE",
-        label: "Compile Prompt: Panel 1",
-        inputs: { style: "style-1.style" },
-        outputs: ["prompt"],
-      },
-      {
-        id: "img-panel-1",
-        kind: "IMAGE_GENERATE",
-        label: "Generate Image: Panel 1",
-        inputs: { prompt: "prompt-panel-1.prompt" },
-        outputs: ["image"],
-      },
-      {
-        id: "prompt-panel-2",
-        kind: "PROMPT_COMPILE",
-        label: "Compile Prompt: Panel 2",
-        inputs: { style: "style-1.style" },
-        outputs: ["prompt"],
-      },
-      {
-        id: "img-panel-2",
-        kind: "IMAGE_GENERATE",
-        label: "Generate Image: Panel 2",
-        inputs: { prompt: "prompt-panel-2.prompt" },
-        outputs: ["image"],
-      },
-      {
-        id: "compose-final",
-        kind: "COMPOSE",
-        label: "Compose Storyboard",
-        inputs: {
-          panel1: "img-panel-1.image",
-          panel2: "img-panel-2.image",
-        },
-        outputs: ["final"],
-      },
-    ],
-    edges: [
-      {
-        from: "plan-0",
-        to: "style-1",
-        fromPort: "storyboard",
-        toPort: "plan",
-      },
-      {
-        from: "style-1",
-        to: "prompt-panel-1",
-        fromPort: "style",
-        toPort: "style",
-      },
-      {
-        from: "style-1",
-        to: "prompt-panel-2",
-        fromPort: "style",
-        toPort: "style",
-      },
-      {
-        from: "prompt-panel-1",
-        to: "img-panel-1",
-        fromPort: "prompt",
-        toPort: "prompt",
-      },
-      {
-        from: "prompt-panel-2",
-        to: "img-panel-2",
-        fromPort: "prompt",
-        toPort: "prompt",
-      },
-      {
-        from: "img-panel-1",
-        to: "compose-final",
-        fromPort: "image",
-        toPort: "panel1",
-      },
-      {
-        from: "img-panel-2",
-        to: "compose-final",
-        fromPort: "image",
-        toPort: "panel2",
-      },
-    ],
-  };
+  const panelCount =
+    typeof input === "object" &&
+    input !== null &&
+    "panelCount" in input &&
+    typeof (input as { panelCount?: unknown }).panelCount === "number"
+      ? (input as { panelCount: number }).panelCount
+      : 4;
+
+  const userPrompt =
+    `Brief: ${briefText}\n\n` +
+    `Produce a storyboard with ${panelCount} panel(s). ` +
+    `Panels may run in parallel. ` +
+    `Return only the JSON object described in the system prompt.`;
+
+  let lastError: string | undefined;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const prompt =
+      attempt === 1
+        ? userPrompt
+        : `${userPrompt}\n\nPrevious attempt produced an invalid graph. Error: ${lastError ?? "unknown"}. Fix the JSON and try again.`;
+
+    const result = await ctx.providers.text.completeText({
+      system: PLANNER_SYSTEM_PROMPT,
+      prompt,
+      json: true,
+      temperature: 0.3,
+    });
+
+    try {
+      const spec = result.parsed as GraphSpec;
+      compileGraph(spec);
+      return spec;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  throw new ProviderError(
+    `Planner produced an invalid GraphSpec after 2 attempts. Last error: ${lastError ?? "unknown"}`,
+    { code: "planner_output_invalid" },
+  );
 }

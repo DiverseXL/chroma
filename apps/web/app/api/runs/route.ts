@@ -30,6 +30,13 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   // Call plan executor
   const planCtx = {
+    // Mirrors the scheduler's legacy fallback: the mock adapter serves every
+    // capability until the real provider set is wired in from the registry.
+    providers: {
+      image: mockAdapter,
+      vision: mockAdapter,
+      text: mockAdapter,
+    },
     adapter: mockAdapter,
     db: prisma,
     runId: run.id,

@@ -1,4 +1,6 @@
 import type {
+  CompleteTextRequest,
+  CompleteTextResult,
   CritiqueResult,
   EditImageRequest,
   GenerateImageRequest,
@@ -34,6 +36,126 @@ export interface MockAdapterConfig {
    * Configurable issues returned by scoreImage.
    */
   critiqueIssues?: string[];
+}
+
+/**
+ * Canned JSON payloads for completeText keyed by system prompt keyword.
+ *
+ * The selector inspects the system prompt for known keywords and returns the
+ * corresponding fixed object. This is intentionally deterministic so test
+ * assertions can rely on stable field names.
+ */
+const CANNED_JSON: Record<string, unknown> = {
+  planner: {
+    nodes: [
+      {
+        id: "plan-0",
+        kind: "PLAN",
+        label: "Plan",
+        inputs: {},
+        outputs: ["storyboard"],
+      },
+      {
+        id: "style-1",
+        kind: "STYLE_ANALYSIS",
+        label: "Style Analysis",
+        inputs: { plan: "plan-0.storyboard" },
+        outputs: ["style"],
+      },
+      {
+        id: "prompt-panel-1",
+        kind: "PROMPT_COMPILE",
+        label: "Panel 1 Prompt",
+        inputs: { style: "style-1.style" },
+        outputs: ["prompt"],
+      },
+      {
+        id: "img-panel-1",
+        kind: "IMAGE_GENERATE",
+        label: "Panel 1 Image",
+        inputs: { prompt: "prompt-panel-1.prompt" },
+        outputs: ["image"],
+      },
+      {
+        id: "critique-1",
+        kind: "CRITIQUE",
+        label: "Panel 1 Critique",
+        inputs: { image: "img-panel-1.image" },
+        outputs: ["score"],
+      },
+      {
+        id: "gate-1",
+        kind: "GATE",
+        label: "Panel 1 Gate",
+        inputs: { critique: "critique-1.score" },
+        outputs: ["decision"],
+      },
+      {
+        id: "compose-final",
+        kind: "COMPOSE",
+        label: "Compose",
+        inputs: { panel1: "img-panel-1.image" },
+        outputs: ["final"],
+      },
+    ],
+    edges: [
+      { from: "plan-0", to: "style-1", fromPort: "storyboard", toPort: "plan" },
+      { from: "style-1", to: "prompt-panel-1", fromPort: "style", toPort: "style" },
+      { from: "prompt-panel-1", to: "img-panel-1", fromPort: "prompt", toPort: "prompt" },
+      { from: "img-panel-1", to: "critique-1", fromPort: "image", toPort: "image" },
+      { from: "critique-1", to: "gate-1", fromPort: "score", toPort: "critique" },
+      { from: "img-panel-1", to: "compose-final", fromPort: "image", toPort: "panel1" },
+    ],
+  },
+  style: {
+    palette: "warm amber and deep indigo",
+    lighting: "golden hour, soft directional shadows",
+    mood: "cinematic, melancholic",
+    medium: "digital painting",
+    era: "contemporary",
+    camera: "wide angle, shallow depth of field",
+  },
+  prompt: {
+    prompt:
+      "A cinematic wide-angle shot at golden hour showing an atmospheric landscape with warm amber tones, deep indigo shadows, and a shallow depth of field — digital painting style.",
+  },
+  critic: {
+    score: 0.85,
+    feedback: "Strong composition and lighting, minor colour fringing on the horizon.",
+    issues: ["slight colour fringing on horizon"],
+  },
+  consistency: {
+    score: 0.9,
+    feedback: "Panels share consistent palette and lighting direction.",
+    issues: [],
+    driftedPanels: [],
+  },
+};
+
+/**
+ * Selects the appropriate canned JSON object based on keywords in the system prompt.
+ *
+ * @param system System prompt text.
+ * @returns A canned JSON object that matches the keyword, or a generic default.
+ */
+function selectCannedJson(system = ""): unknown {
+  const lower = system.toLowerCase();
+  if (lower.includes("planner") || lower.includes("plan")) {
+    return CANNED_JSON.planner;
+  }
+  if (lower.includes("style")) {
+    return CANNED_JSON.style;
+  }
+  if (lower.includes("prompt") || lower.includes("compile")) {
+    return CANNED_JSON.prompt;
+  }
+  if (lower.includes("critic") || lower.includes("critique") || lower.includes("score")) {
+    return CANNED_JSON.critic;
+  }
+  if (lower.includes("consistency")) {
+    return CANNED_JSON.consistency;
+  }
+  return { result: "mock" };
 }
 
 /**
@@ -141,10 +263,31 @@ export class MockAdapter implements ProviderAdapter {
    */
   async scoreImage(req: ScoreImageRequest): Promise<CritiqueResult> {
     this.checkFaultInjection();
+    void req;
     return {
       score: this.config.critiqueScore ?? 0.8,
       feedback: "mock critique",
       issues: this.config.critiqueIssues ?? [],
     };
+  }
+
+  /**
+   * Returns a deterministic text completion. When req.json is true, selects a
+   * canned JSON object based on keywords in the system prompt and returns both
+   * the serialized text and the parsed object.
+   *
+   * @param req The text completion parameters.
+   */
+  async completeText(req: CompleteTextRequest): Promise<CompleteTextResult> {
+    this.checkFaultInjection();
+
+    if (req.json) {
+      const parsed = selectCannedJson(req.system);
+      const text = JSON.stringify(parsed);
+      return { text, parsed, usage: { inputTokens: 10, outputTokens: 20 } };
+    }
+
+    const text = `Mock text response for: ${req.prompt.slice(0, 80)}`;
+    return { text, usage: { inputTokens: 10, outputTokens: 10 } };
   }
 }
