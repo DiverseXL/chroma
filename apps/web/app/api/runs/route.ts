@@ -3,6 +3,7 @@ import {
   executePlan,
   getMaxAttemptsForKind,
   writeArtifact,
+  type CompiledGraph,
 } from "@chroma/core";
 import { prisma } from "@chroma/db";
 import { NextResponse } from "next/server";
@@ -28,6 +29,15 @@ export async function POST(req: Request): Promise<NextResponse> {
     },
   });
 
+  // Node.id is the global Prisma primary key, but the planner emits
+  // deterministic local ids ("plan-0", "panel1_prompt", ...). Scope every local
+  // id to this run so a second run cannot collide with rows from the first.
+  //
+  // Declared before planCtx: the planner context references node ids too, but
+  // can only resolve them lazily because the graph does not exist until after
+  // executePlan() returns.
+  const idMap = new Map<string, string>();
+
   // Call plan executor
   const planCtx = {
     // Mirrors the scheduler's legacy fallback: the mock adapter serves every
@@ -40,7 +50,9 @@ export async function POST(req: Request): Promise<NextResponse> {
     adapter: mockAdapter,
     db: prisma,
     runId: run.id,
-    nodeId: "plan-0",
+    get nodeId(): string {
+      return idMap.get("plan-0") ?? `${run.id}:plan-0`;
+    },
     artifacts: {
       write: (
         bytes: Uint8Array,
@@ -48,7 +60,16 @@ export async function POST(req: Request): Promise<NextResponse> {
         width?: number,
         height?: number,
         metadata?: Record<string, unknown>,
-      ) => writeArtifact(prisma, "plan-0", bytes, mimeType, width, height, metadata),
+      ) =>
+        writeArtifact(
+          prisma,
+          idMap.get("plan-0") ?? `${run.id}:plan-0`,
+          bytes,
+          mimeType,
+          width,
+          height,
+          metadata,
+        ),
     },
   };
 
@@ -57,16 +78,34 @@ export async function POST(req: Request): Promise<NextResponse> {
   // Compile and validate the DAG
   const compiled = compileGraph(graphSpec);
 
+  for (const n of compiled.nodes) {
+    idMap.set(n.id, `${run.id}:${n.id}`);
+  }
+
+  // Rewrites a planner input reference of the form "<srcLocalId>.<port>" onto
+  // the scoped id. Ports are left untouched.
+  const remapRef = (ref: string): string => {
+    const dot = ref.indexOf(".");
+    if (dot === -1) return idMap.get(ref) ?? ref;
+    const src = ref.slice(0, dot);
+    const port = ref.slice(dot);
+    return `${idMap.get(src) ?? src}${port}`;
+  };
+
   // Persist Node records in database
   for (const node of compiled.nodes) {
     await prisma.node.create({
       data: {
-        id: node.id,
+        id: idMap.get(node.id) as string,
         runId: run.id,
         kind: node.kind,
         status: "PENDING",
         label: node.label,
-        inputJson: (node.inputs ?? {}) as object,
+        // Keep the planner's local id reachable without a schema migration.
+        inputJson: {
+          ...((node.inputs ?? {}) as object),
+          _localId: node.id,
+        } as object,
         attempts: 0,
         maxAttempts: getMaxAttemptsForKind(node.kind),
       },
@@ -78,16 +117,56 @@ export async function POST(req: Request): Promise<NextResponse> {
     await prisma.edge.create({
       data: {
         runId: run.id,
-        fromNodeId: edge.from,
-        toNodeId: edge.to,
+        fromNodeId: idMap.get(edge.from) as string,
+        toNodeId: idMap.get(edge.to) as string,
         fromPort: edge.fromPort,
         toPort: edge.toPort,
       },
     });
   }
 
+  // The scheduler reads and writes Node/Artifact rows by the ids carried on the
+  // graph it is handed, so it must receive scoped ids too — including the
+  // "<localId>.<port>" input references it resolves at scheduler.ts:387.
+  const scheduledGraph: CompiledGraph = {
+    nodes: compiled.nodes.map((n) => ({
+      ...n,
+      id: idMap.get(n.id) as string,
+      inputs: Object.fromEntries(
+        Object.entries(n.inputs ?? {}).map(([port, ref]) => [
+          port,
+          remapRef(ref),
+        ]),
+      ),
+    })),
+    edges: compiled.edges.map((e) => ({
+      ...e,
+      from: idMap.get(e.from) as string,
+      to: idMap.get(e.to) as string,
+    })),
+    order: compiled.order.map((id) => idMap.get(id) as string),
+    rank: new Map(
+      [...compiled.rank].map(([k, v]): [string, number] => [
+        idMap.get(k) as string,
+        v,
+      ]),
+    ),
+    fanIn: new Map(
+      [...compiled.fanIn].map(([k, v]): [string, string[]] => [
+        idMap.get(k) as string,
+        v.map((x) => idMap.get(x) as string),
+      ]),
+    ),
+    fanOut: new Map(
+      [...compiled.fanOut].map(([k, v]): [string, string[]] => [
+        idMap.get(k) as string,
+        v.map((x) => idMap.get(x) as string),
+      ]),
+    ),
+  };
+
   // Launch Scheduler in background (do not block HTTP response)
-  scheduler.run(run.id, compiled).catch((err) => {
+  scheduler.run(run.id, scheduledGraph).catch((err) => {
     console.error(`Scheduler background execution error for run ${run.id}:`, err);
   });
 
