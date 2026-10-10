@@ -197,6 +197,39 @@ describe("GraphCompiler", () => {
     }
   });
 
+  it("rejects malformed input references", () => {
+    const spec: GraphSpec = {
+      nodes: [
+        {
+          id: "plan-1",
+          kind: "PLAN",
+          label: "Plan",
+          inputs: {},
+          outputs: ["out"],
+        },
+        {
+          id: "node-a",
+          kind: "COMPOSE",
+          label: "Compose",
+          inputs: { image: "plan image" },
+          outputs: [],
+        },
+      ],
+      edges: [
+        { from: "plan-1", to: "node-a", fromPort: "out", toPort: "image" },
+      ],
+    };
+
+    expect(() => compileGraph(spec)).toThrowError(GraphValidationError);
+    try {
+      compileGraph(spec);
+    } catch (err) {
+      const gve = err as GraphValidationError;
+      expect(gve.reason).toBe("INVALID_INPUT_REFERENCE");
+      expect(gve.detail).toContain('nodeId.outputPort');
+    }
+  });
+
   it("rejects orphan node unreachable from PLAN", () => {
     const spec: GraphSpec = {
       nodes: [

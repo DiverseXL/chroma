@@ -18,6 +18,7 @@ export interface CompiledGraph {
 export type GraphValidationReason =
   | "DUPLICATE_NODE_ID"
   | "UNKNOWN_NODE_REFERENCE"
+  | "INVALID_INPUT_REFERENCE"
   | "CYCLE_DETECTED"
   | "MISSING_REQUIRED_INPUT"
   | "UNREACHABLE_FROM_PLAN"
@@ -119,7 +120,50 @@ export function compileGraph(spec: GraphSpec): CompiledGraph {
     }
   }
 
-  // 4. Every node is reachable from at least one PLAN node
+  // 4. Every declared input must reference an existing source output and edge.
+  for (const node of spec.nodes) {
+    for (const [inputPort, ref] of Object.entries(node.inputs)) {
+      const separator = ref.lastIndexOf(".");
+      if (separator <= 0 || separator === ref.length - 1) {
+        throw new GraphValidationError(
+          "INVALID_INPUT_REFERENCE",
+          `Node "${node.id}" input "${inputPort}" must reference a source as "nodeId.outputPort", got "${ref}"`,
+        );
+      }
+
+      const sourceId = ref.slice(0, separator);
+      const sourcePort = ref.slice(separator + 1);
+      const sourceNode = nodeMap.get(sourceId);
+      if (!sourceNode) {
+        throw new GraphValidationError(
+          "UNKNOWN_NODE_REFERENCE",
+          `Node "${node.id}" input "${inputPort}" references non-existent source node: "${sourceId}"`,
+        );
+      }
+      if (!sourceNode.outputs.includes(sourcePort)) {
+        throw new GraphValidationError(
+          "INVALID_INPUT_REFERENCE",
+          `Node "${node.id}" input "${inputPort}" references unknown output "${sourcePort}" on node "${sourceId}"`,
+        );
+      }
+      if (
+        !spec.edges.some(
+          (edge) =>
+            edge.from === sourceId &&
+            edge.fromPort === sourcePort &&
+            edge.to === node.id &&
+            edge.toPort === inputPort,
+        )
+      ) {
+        throw new GraphValidationError(
+          "INVALID_INPUT_REFERENCE",
+          `Node "${node.id}" input "${inputPort}" does not match an inbound edge from "${sourceId}.${sourcePort}"`,
+        );
+      }
+    }
+  }
+
+  // 5. Every node is reachable from at least one PLAN node
   const planNodes = spec.nodes.filter((n) => n.kind === "PLAN");
   if (planNodes.length === 0) {
     throw new GraphValidationError(
@@ -153,7 +197,7 @@ export function compileGraph(spec: GraphSpec): CompiledGraph {
     }
   }
 
-  // 5. At least one node has out-degree zero (terminal node exists)
+  // 6. At least one node has out-degree zero (terminal node exists)
   const hasTerminalNode = spec.nodes.some(
     (n) => (fanOut.get(n.id)?.length ?? 0) === 0,
   );
@@ -164,7 +208,7 @@ export function compileGraph(spec: GraphSpec): CompiledGraph {
     );
   }
 
-  // 6. No cycles. Use Kahn's algorithm to compute topological order.
+  // 7. No cycles. Use Kahn's algorithm to compute topological order.
   const inDegree = new Map<string, number>();
   for (const node of spec.nodes) {
     inDegree.set(node.id, fanIn.get(node.id)!.length);
@@ -201,7 +245,7 @@ export function compileGraph(spec: GraphSpec): CompiledGraph {
     );
   }
 
-  // 7. Compute rank (longest path from any root)
+  // 8. Compute rank (longest path from any root)
   const rank = new Map<string, number>();
   for (const nodeId of order) {
     const parents = fanIn.get(nodeId)!;

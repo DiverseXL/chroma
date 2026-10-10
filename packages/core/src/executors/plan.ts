@@ -17,6 +17,8 @@ const PLANNER_SYSTEM_PROMPT =
   "Return strict JSON matching this shape: { nodes: NodeSpec[], edges: EdgeSpec[] } " +
   "where NodeSpec = { id, kind, label, inputs: Record<string,string>, outputs: string[] } " +
   "and EdgeSpec = { from, to, fromPort, toPort }. " +
+  "Every input value must be exactly a source reference in the form \"sourceNodeId.outputPort\", " +
+  "and must agree with the corresponding edge's from, fromPort, to, and toPort. " +
   "Node ids must be unique and human-readable (e.g. panel1_prompt). " +
   "Do not include any text outside the JSON.";
 
