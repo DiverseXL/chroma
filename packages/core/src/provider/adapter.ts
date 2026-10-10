@@ -36,6 +36,7 @@ export interface CritiqueResult {
   score: number;
   feedback: string;
   issues: string[];
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -71,6 +72,7 @@ export interface CompleteTextResult {
     inputTokens?: number;
     outputTokens?: number;
   };
+  metadata?: Record<string, unknown>;
 }
 
 /**

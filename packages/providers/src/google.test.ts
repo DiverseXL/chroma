@@ -89,6 +89,92 @@ describe("GoogleGeminiAdapter", () => {
 
     expect(result.text).toBe("Hello world");
     expect(result.parsed).toBeUndefined();
+    expect(result.metadata).toEqual({ model: TEXT_MODEL });
+  });
+
+  it("falls back to the next text model after HTTP 429", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "quota" } }), { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSuccessBody("fallback response")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    const result = await new GoogleGeminiAdapter().completeText({
+      prompt: "hello",
+    });
+
+    expect(result.text).toBe("fallback response");
+    expect(result.metadata).toEqual({ model: "gemini-2.5-flash-lite" });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+    ]);
+  });
+
+  it("falls back to the next text model after HTTP 404", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "model retired" } }), { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSuccessBody("fallback response")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    const result = await new GoogleGeminiAdapter().completeText({
+      prompt: "hello",
+    });
+
+    expect(result.metadata).toEqual({ model: "gemini-2.5-flash-lite" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the next vision model after HTTP 429", async () => {
+    const critique = {
+      score: 0.9,
+      feedback: "Good",
+      issues: [],
+    };
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota" } }), {
+          status: 429,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify(buildSuccessBody(JSON.stringify(critique))),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    const result = await new GoogleGeminiAdapter().scoreImage({
+      artifactId: "art-1",
+      rubric: "Score image",
+      imageBase64: MOCK_PNG_BASE64,
+    });
+
+    expect(result.score).toBe(0.9);
+    expect(result.metadata).toEqual({ model: "gemini-2.5-flash" });
+  });
+
+  it("does not fall back after HTTP 400", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "bad request" } }), {
+        status: 400,
+      }),
+    );
+
+    const error = await captureRejection(
+      new GoogleGeminiAdapter().completeText({ prompt: "hello" }),
+      "bad request",
+    );
+
+    expect(error).toBeInstanceOf(ProviderError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   // --- completeText JSON mode ---

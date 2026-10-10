@@ -1,4 +1,4 @@
-import { PrismaClient } from "@chroma/db";
+import type { RetryingPrismaClient } from "@chroma/db";
 import { EventBus } from "../events/bus.js";
 import { getExecutor } from "../executors/index.js";
 import type { ProviderSet } from "../executors/types.js";
@@ -46,7 +46,7 @@ export interface SchedulerOptions {
    */
   adapter?: ProviderAdapter;
   eventBus: EventBus;
-  db: PrismaClient;
+  db: RetryingPrismaClient;
   concurrency?: number;
   critiqueThreshold?: number;
   sleepFn?: (ms: number) => Promise<void>;
@@ -106,7 +106,7 @@ export function calculateBackoffMs(
 export class Scheduler {
   private readonly providers: ProviderSet;
   private readonly eventBus: EventBus;
-  private readonly db: PrismaClient;
+  private readonly db: RetryingPrismaClient;
   private readonly concurrency: number;
   private readonly critiqueThreshold: number;
   private readonly sleepFn: (ms: number) => Promise<void>;

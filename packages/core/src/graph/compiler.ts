@@ -6,6 +6,7 @@ import type { EdgeSpec, GraphSpec, NodeSpec } from "../types/index.js";
 export interface CompiledGraph {
   nodes: NodeSpec[];
   edges: EdgeSpec[];
+  metadata?: Record<string, unknown>;
   order: string[];
   rank: Map<string, number>;
   fanOut: Map<string, string[]>;
@@ -266,6 +267,7 @@ export function compileGraph(spec: GraphSpec): CompiledGraph {
   return {
     nodes: spec.nodes,
     edges: spec.edges,
+    metadata: spec.metadata,
     order,
     rank,
     fanOut,

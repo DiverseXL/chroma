@@ -1,4 +1,4 @@
-import { PrismaClient } from "@chroma/db";
+import type { RetryingPrismaClient } from "@chroma/db";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
@@ -59,7 +59,7 @@ function getArtifactKind(mimeType: string): ArtifactKind {
  * @returns The created Artifact database record.
  */
 export async function writeArtifact(
-  db: PrismaClient,
+  db: RetryingPrismaClient,
   nodeId: string,
   bytes: Uint8Array,
   mimeType: string,
@@ -102,7 +102,7 @@ export async function writeArtifact(
  * @throws {Error} If artifact record or file on disk does not exist.
  */
 export async function readArtifact(
-  db: PrismaClient,
+  db: RetryingPrismaClient,
   artifactId: string,
 ): Promise<{ bytes: Uint8Array; mimeType: string }> {
   const record = await db.artifact.findUnique({

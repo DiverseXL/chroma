@@ -132,6 +132,12 @@ function toProviderError(
       `Google API rate limited the request (HTTP 429): ${message}`,
     );
   }
+  if (status === 404) {
+    return new ProviderError(
+      `Google API model was not found (HTTP 404): ${message}`,
+      { code: "model_not_found" },
+    );
+  }
   if (status === 401) {
     return new ProviderError(
       `Google API rejected the API key (HTTP 401): ${message}`,
@@ -187,6 +193,36 @@ async function callGenerateContent(
   }
 
   return body;
+}
+
+/**
+ * Tries models in preference order, advancing only on quota or retired-model errors.
+ */
+async function callWithModelFallback(
+  models: string[],
+  apiKey: string,
+  requestBody: unknown,
+): Promise<{ body: unknown; model: string }> {
+  let lastError: unknown;
+  for (const model of models) {
+    try {
+      return {
+        body: await callGenerateContent(model, apiKey, requestBody),
+        model,
+      };
+    } catch (error) {
+      lastError = error;
+      if (
+        !(
+          error instanceof ProviderRateLimitError ||
+          (error instanceof ProviderError && error.code === "model_not_found")
+        )
+      ) {
+        throw error;
+      }
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -264,6 +300,11 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
    */
   async completeText(req: CompleteTextRequest): Promise<CompleteTextResult> {
     const { apiKey, textModel } = readConfig(process.env);
+    const models = [...new Set([
+      textModel,
+      "gemini-2.5-flash-lite",
+      "gemini-2.0-flash",
+    ])];
 
     const promptText =
       req.system != null ? `${req.system}\n\n${req.prompt}` : req.prompt;
@@ -291,11 +332,15 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
       requestBody.generationConfig = generationConfig;
     }
 
-    const body = await callGenerateContent(textModel, apiKey, requestBody);
+    const { body, model } = await callWithModelFallback(
+      models,
+      apiKey,
+      requestBody,
+    );
     const text = extractResponseText(body);
 
     if (!req.json) {
-      return { text };
+      return { text, metadata: { model } };
     }
 
     let parsed: unknown;
@@ -308,7 +353,7 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
       );
     }
 
-    return { text, parsed };
+    return { text, parsed, metadata: { model } };
   }
 
   /**
@@ -327,6 +372,11 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
    */
   async scoreImage(req: ScoreImageRequest): Promise<CritiqueResult> {
     const { apiKey, visionModel } = readConfig(process.env);
+    const models = [...new Set([
+      visionModel,
+      "gemini-2.5-flash",
+      "gemini-2.0-flash",
+    ])];
 
     if (!req.imageBase64) {
       throw new ProviderError(
@@ -355,7 +405,11 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
       },
     };
 
-    const body = await callGenerateContent(visionModel, apiKey, requestBody);
+    const { body, model } = await callWithModelFallback(
+      models,
+      apiKey,
+      requestBody,
+    );
     const text = extractResponseText(body);
 
     let parsed: unknown;
@@ -389,6 +443,7 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
       score: result.score,
       feedback: typeof result.feedback === "string" ? result.feedback : "",
       issues: Array.isArray(result.issues) ? result.issues : [],
+      metadata: { model },
     };
   }
 

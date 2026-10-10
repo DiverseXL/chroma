@@ -1,4 +1,4 @@
-import { PrismaClient } from "@chroma/db";
+import type { RetryingPrismaClient } from "@chroma/db";
 import type { ProviderAdapter } from "../provider/adapter.js";
 import type { Artifact } from "../types/index.js";
 
@@ -51,7 +51,7 @@ export interface ExecutionContext {
    * Executors should prefer ctx.providers.
    */
   adapter: ProviderAdapter;
-  db: PrismaClient;
+  db: RetryingPrismaClient;
   runId: string;
   nodeId: string;
   artifacts: ArtifactWriter;

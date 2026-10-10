@@ -105,4 +105,5 @@ export interface EdgeSpec {
 export interface GraphSpec {
   nodes: NodeSpec[];
   edges: EdgeSpec[];
+  metadata?: Record<string, unknown>;
 }

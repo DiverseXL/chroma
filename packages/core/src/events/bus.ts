@@ -1,4 +1,4 @@
-import { PrismaClient } from "@chroma/db";
+import type { RetryingPrismaClient } from "@chroma/db";
 import type { Event } from "../types/index.js";
 
 /**
@@ -19,14 +19,14 @@ export type EventListener = (event: Event) => void;
  * Centralized transactional event bus for publishing, subscribing, and replaying run events.
  */
 export class EventBus {
-  private readonly db: PrismaClient;
+  private readonly db: RetryingPrismaClient;
   private readonly subscribers = new Map<string, Set<EventListener>>();
 
   /**
    * Initializes the event bus.
    * @param opts Database client dependency.
    */
-  constructor(opts: { db: PrismaClient }) {
+  constructor(opts: { db: RetryingPrismaClient }) {
     this.db = opts.db;
   }
 

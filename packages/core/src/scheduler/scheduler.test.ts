@@ -1,4 +1,4 @@
-import { PrismaClient } from "@chroma/db";
+import type { RetryingPrismaClient } from "@chroma/db";
 import { describe, expect, it } from "vitest";
 import { EventBus } from "../events/bus.js";
 import { compileGraph } from "../graph/compiler.js";
@@ -9,7 +9,7 @@ import { Scheduler } from "./scheduler.js";
 /**
  * Creates an in-memory mock PrismaClient conforming to the calls made by Scheduler and EventBus.
  */
-function createMockDb(): PrismaClient {
+function createMockDb(): RetryingPrismaClient {
   const runs = new Map<string, Record<string, unknown>>();
   const nodes = new Map<string, Record<string, unknown>>();
   const edges: Array<Record<string, unknown>> = [];
@@ -98,7 +98,7 @@ function createMockDb(): PrismaClient {
     $executeRaw: async () => 1,
   };
 
-  return mockDb as unknown as PrismaClient;
+  return mockDb as unknown as RetryingPrismaClient;
 }
 
 describe("Scheduler", () => {

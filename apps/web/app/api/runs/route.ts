@@ -138,6 +138,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       from: idMap.get(e.from) as string,
       to: idMap.get(e.to) as string,
     })),
+    metadata: compiled.metadata,
     order: compiled.order.map((id) => idMap.get(id) as string),
     rank: new Map(
       [...compiled.rank].map(([k, v]): [string, number] => [
