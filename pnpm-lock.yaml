@@ -48,6 +48,9 @@ importers:
       '@chroma/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@chroma/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
       next:
         specifier: ^15
         version: 15.5.27(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

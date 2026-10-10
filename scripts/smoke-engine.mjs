@@ -3,6 +3,8 @@
  * Assumes `pnpm dev` is running on http://localhost:3000.
  */
 
+import { stat } from "node:fs/promises";
+
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3000";
 
 async function main() {
@@ -30,7 +32,9 @@ async function main() {
     const postRes = await fetch(`${BASE_URL}/api/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ brief: "A neon cyberpunk cityscape with flying vehicles" }),
+      body: JSON.stringify({
+        brief: process.env.BRIEF || "A neon cyberpunk cityscape with flying vehicles",
+      }),
     });
 
     if (!postRes.ok) {
@@ -52,9 +56,9 @@ async function main() {
   const controller = new AbortController();
   const timeoutTimer = setTimeout(() => {
     controller.abort();
-    console.log("SMOKE FAIL: Timed out waiting for run.completed event after 30s");
+    console.log("SMOKE FAIL: Timed out waiting for run.completed event after 180s");
     process.exit(1);
-  }, 30000);
+  }, 180000);
 
   try {
     const eventsRes = await fetch(`${BASE_URL}/api/runs/${runId}/events`, {
@@ -119,8 +123,10 @@ async function main() {
     const snapshot = await snapRes.json();
     console.log(`Snapshot received. Run Status: ${snapshot.run?.status}, Nodes: ${snapshot.nodes?.length}, Artifacts: ${snapshot.artifacts?.length}`);
 
-    if (snapshot.run?.status !== "SUCCEEDED") {
-      console.log(`SMOKE FAIL: Expected run.status === 'SUCCEEDED', got '${snapshot.run?.status}'`);
+    if (!["SUCCEEDED", "DEGRADED"].includes(snapshot.run?.status)) {
+      console.log(
+        `SMOKE FAIL: Expected run.status to be 'SUCCEEDED' or 'DEGRADED', got '${snapshot.run?.status}'`,
+      );
       process.exit(1);
     }
 
@@ -129,9 +135,55 @@ async function main() {
       process.exit(1);
     }
 
-    const hasImageArtifact = snapshot.artifacts?.some((a) => a.kind === "IMAGE");
-    if (!hasImageArtifact) {
-      console.log("SMOKE FAIL: Expected at least one artifact of kind 'IMAGE'");
+    const critiqueNodes = snapshot.nodes.filter(
+      (node) =>
+        node.kind === "CRITIQUE" &&
+        typeof node.outputJson?.score === "number" &&
+        Number.isFinite(node.outputJson.score),
+    );
+    if (critiqueNodes.length < 2) {
+      console.log(
+        `SMOKE FAIL: Expected at least 2 CRITIQUE nodes with numeric scores, got ${critiqueNodes.length}`,
+      );
+      process.exit(1);
+    }
+
+    const imageArtifacts = snapshot.artifacts.filter(
+      (artifact) => artifact.kind === "IMAGE",
+    );
+    if (imageArtifacts.length < 2) {
+      console.log(
+        `SMOKE FAIL: Expected at least 2 IMAGE artifacts, got ${imageArtifacts.length}`,
+      );
+      process.exit(1);
+    }
+
+    for (const artifact of imageArtifacts.slice(0, 2)) {
+      const file = await stat(artifact.storageKey);
+      if (file.size <= 50000) {
+        console.log(
+          `SMOKE FAIL: IMAGE artifact ${artifact.id} is only ${file.size} bytes on disk`,
+        );
+        process.exit(1);
+      }
+      console.log(
+        `IMAGE artifact ${artifact.id}: ${file.size} bytes on disk`,
+      );
+    }
+
+    const artifactRes = await fetch(
+      `${BASE_URL}/api/artifacts/${imageArtifacts[0].id}`,
+    );
+    const artifactBytes = await artifactRes.arrayBuffer();
+    const contentType = artifactRes.headers.get("content-type");
+    if (
+      artifactRes.status !== 200 ||
+      contentType !== "image/png" ||
+      artifactBytes.byteLength <= 50000
+    ) {
+      console.log(
+        `SMOKE FAIL: Artifact GET expected HTTP 200, image/png, >50000 bytes; got HTTP ${artifactRes.status}, ${contentType}, ${artifactBytes.byteLength} bytes`,
+      );
       process.exit(1);
     }
 

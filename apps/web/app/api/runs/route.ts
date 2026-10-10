@@ -7,7 +7,7 @@ import {
 } from "@chroma/core";
 import { prisma } from "@chroma/db";
 import { NextResponse } from "next/server";
-import { mockAdapter, scheduler } from "@/lib/engine";
+import { providers, scheduler } from "@/lib/engine";
 
 /**
  * Handles creation of a new generation workflow run.
@@ -40,14 +40,8 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   // Call plan executor
   const planCtx = {
-    // Mirrors the scheduler's legacy fallback: the mock adapter serves every
-    // capability until the real provider set is wired in from the registry.
-    providers: {
-      image: mockAdapter,
-      vision: mockAdapter,
-      text: mockAdapter,
-    },
-    adapter: mockAdapter,
+    providers,
+    adapter: providers.image,
     db: prisma,
     runId: run.id,
     get nodeId(): string {

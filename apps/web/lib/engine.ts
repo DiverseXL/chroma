@@ -1,5 +1,6 @@
-import { EventBus, MockAdapter, Scheduler } from "@chroma/core";
+import { EventBus, Scheduler } from "@chroma/core";
 import { prisma } from "@chroma/db";
+import { buildProviders, type ProviderSet } from "@chroma/providers";
 
 /**
  * Global singleton state container for engine components during local development.
@@ -8,7 +9,7 @@ import { prisma } from "@chroma/db";
 const globalEngine = globalThis as unknown as {
   eventBus?: EventBus;
   scheduler?: Scheduler;
-  adapter?: MockAdapter;
+  providers?: ProviderSet;
 };
 
 /**
@@ -18,10 +19,17 @@ export const eventBus: EventBus =
   globalEngine.eventBus ?? new EventBus({ db: prisma });
 
 /**
- * Shared singleton MockAdapter provider instance.
+ * Shared singleton provider instances.
  */
-export const mockAdapter: MockAdapter =
-  globalEngine.adapter ?? new MockAdapter();
+export const providers: ProviderSet =
+  globalEngine.providers ??
+  buildProviders({
+    CF_WORKER_URL: process.env.CF_WORKER_URL,
+    CF_API_KEY: process.env.CF_API_KEY,
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    GOOGLE_MODEL_TEXT: process.env.GOOGLE_MODEL_TEXT,
+    GOOGLE_MODEL_VISION: process.env.GOOGLE_MODEL_VISION,
+  });
 
 /**
  * Shared singleton Scheduler instance.
@@ -29,7 +37,7 @@ export const mockAdapter: MockAdapter =
 export const scheduler: Scheduler =
   globalEngine.scheduler ??
   new Scheduler({
-    adapter: mockAdapter,
+    providers,
     eventBus,
     db: prisma,
     concurrency: 4,
@@ -37,6 +45,6 @@ export const scheduler: Scheduler =
 
 if (process.env.NODE_ENV !== "production") {
   globalEngine.eventBus = eventBus;
-  globalEngine.adapter = mockAdapter;
+  globalEngine.providers = providers;
   globalEngine.scheduler = scheduler;
 }
