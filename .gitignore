@@ -24,3 +24,6 @@ build/
 .eslintcache
 *.log
 .tmp-*
+.agents/
+skills-lock.json
+.chroma/

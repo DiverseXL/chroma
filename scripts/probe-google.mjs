@@ -3,7 +3,7 @@
  * Probe #1: Google Gemini API (Google AI Studio).
  *
  * Makes exactly two calls:
- *   1. one image-generation call (Nano Banana model id from env)
+ *   1. one image-generation call (model id from GOOGLE_MODEL_NANO_BANANA)
  *   2. one vision call scoring a hardcoded tiny PNG against a trivial rubric
  *
  * Writes:
@@ -11,10 +11,11 @@
  *   docs/probe/google-generate.png   returned image bytes
  *   docs/probe/google-vision.json    raw response body
  *
- * REST endpoint (confirmed):
- *   https://ai.google.dev/gemini-api/docs/image-generation
- *   POST https://generativelanguage.googleapis.com/v1beta/interactions
+ * Endpoint (confirmed live at https://ai.google.dev/api/generate-content):
+ *   POST https://generativelanguage.googleapis.com/v1beta/{model=models/*}:generateContent
  *   header: x-goog-api-key
+ *   request body fields: contents[], generationConfig
+ *   response body: candidates[] -> content -> parts[]
  *
  * Prints status lines only. No API key is ever hardcoded.
  */
@@ -22,7 +23,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
+const API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models";
 
 // 16x16 solid red PNG, generated locally and embedded as a literal.
 const TINY_TEST_IMAGE_PNG_BASE64 =
@@ -61,38 +62,40 @@ function ensureProbeDir() {
   return dir;
 }
 
+function endpointFor(model) {
+  return `${API_ROOT}/${model}:generateContent`;
+}
+
 /**
- * Locates `output_image.data` anywhere in the parsed response.
- * `output_image` and `data` are the field names documented at
- * https://ai.google.dev/gemini-api/docs/image-generation
- * The walk makes no assumption about the wrapper object around it.
+ * Returns the first part of the first candidate that carries inline image
+ * bytes under `inlineData.data`.
+ *
+ * Documented response shape: `candidates[].content.parts[]`.
+ * Source: https://ai.google.dev/api/generate-content
  */
-function findOutputImageData(node) {
-  if (node === null || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      const found = findOutputImageData(item);
-      if (found) return found;
+function findInlineImageData(json) {
+  const parts = json?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return null;
+  for (const part of parts) {
+    if (part && typeof part.inlineData?.data === "string") {
+      return part.inlineData.data;
     }
-    return null;
-  }
-  const candidate = node.output_image;
-  if (
-    candidate &&
-    typeof candidate === "object" &&
-    typeof candidate.data === "string"
-  ) {
-    return candidate.data;
-  }
-  for (const value of Object.values(node)) {
-    const found = findOutputImageData(value);
-    if (found) return found;
   }
   return null;
 }
 
-async function callInteractions(apiKey, body) {
-  const response = await fetch(ENDPOINT, {
+/**
+ * Returns the text of the first candidate's first part.
+ * Source: https://ai.google.dev/api/generate-content
+ */
+function firstCandidateText(json) {
+  const part = json?.candidates?.[0]?.content?.parts?.[0];
+  return typeof part?.text === "string" ? part.text : null;
+}
+
+async function callGenerateContent(apiKey, model, body) {
+  const url = endpointFor(model);
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "x-goog-api-key": apiKey,
@@ -109,7 +112,7 @@ async function callInteractions(apiKey, body) {
     // Leave json null; the raw text is still written to disk.
   }
 
-  return { status: response.status, ok: response.ok, text, json };
+  return { url, status: response.status, ok: response.ok, text, json };
 }
 
 async function main() {
@@ -120,15 +123,19 @@ async function main() {
   const visionModel = requireEnv("GOOGLE_MODEL_VISION");
   const probeDir = ensureProbeDir();
 
-  log(`INFO endpoint ${ENDPOINT}`);
   log(`INFO image model ${imageModel}`);
   log(`INFO vision model ${visionModel}`);
+  log(`INFO image endpoint ${endpointFor(imageModel)}`);
+  log(`INFO vision endpoint ${endpointFor(visionModel)}`);
 
   // --- Call 1: image generation -----------------------------------------
   const generatePath = path.join(probeDir, "google-generate.json");
-  const generate = await callInteractions(apiKey, {
-    model: imageModel,
-    input: [{ type: "text", text: IMAGE_PROMPT }],
+  const generate = await callGenerateContent(apiKey, imageModel, {
+    contents: [{ parts: [{ text: IMAGE_PROMPT }] }],
+    // UNVERIFIED: `generationConfig.responseModalities` with enum values
+    // "TEXT" / "IMAGE" is not documented on any ai.google.dev page I could
+    // load in this pass. Please confirm the field name and enum casing.
+    generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
   });
 
   writeFileSync(generatePath, generate.text, "utf8");
@@ -139,25 +146,32 @@ async function main() {
     process.exitCode = 1;
   }
 
-  const base64Image = generate.json ? findOutputImageData(generate.json) : null;
+  const base64Image = generate.json ? findInlineImageData(generate.json) : null;
   if (base64Image) {
     const imagePath = path.join(probeDir, "google-generate.png");
     writeFileSync(imagePath, Buffer.from(base64Image, "base64"));
     log(`INFO wrote ${imagePath}`);
   } else {
-    log("WARN no output_image.data found in image generation response");
+    log("WARN no inlineData.data found in candidates[0].content.parts");
   }
 
   // --- Call 2: vision scoring -------------------------------------------
   const visionPath = path.join(probeDir, "google-vision.json");
-  const vision = await callInteractions(apiKey, {
-    model: visionModel,
-    input: [
-      { type: "text", text: VISION_RUBRIC },
+  const vision = await callGenerateContent(apiKey, visionModel, {
+    contents: [
       {
-        type: "image",
-        mime_type: "image/png",
-        data: TINY_TEST_IMAGE_PNG_BASE64,
+        parts: [
+          { text: VISION_RUBRIC },
+          {
+            // UNVERIFIED casing: the cited page's curl sample writes this as
+            // `inline_data` with `mime_type` (snake_case). camelCase is the
+            // protobuf-JSON equivalent; both are normally accepted.
+            inlineData: {
+              mimeType: "image/png",
+              data: TINY_TEST_IMAGE_PNG_BASE64,
+            },
+          },
+        ],
       },
     ],
   });
@@ -168,6 +182,13 @@ async function main() {
   if (!vision.ok) {
     log("FAIL vision request was not successful");
     process.exitCode = 1;
+  }
+
+  const score = vision.json ? firstCandidateText(vision.json) : null;
+  if (score) {
+    log(`INFO vision candidate text ${JSON.stringify(score.slice(0, 200))}`);
+  } else {
+    log("WARN no candidates[0].content.parts[0].text found in vision response");
   }
 
   log("DONE google probe finished");

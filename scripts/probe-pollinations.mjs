@@ -4,25 +4,38 @@
  *
  * Makes exactly one text-to-image call and saves the raw response bytes.
  *
- * Endpoint (confirmed from the current Pollinations API docs):
- *   Base URL https://gen.pollinations.ai
- *   GET /image/{prompt}
+ * Endpoint used here:
+ *   GET https://image.pollinations.ai/prompt/{prompt}
+ *     ?width=1024&height=1024&model=flux&nologo=true
+ *
+ * !! UNVERIFIED - CONFLICTS WITH CURRENT DOCS !!
+ * This is the legacy Pollinations surface. It is documented ONLY on the stale
+ * `master` branch:
+ *   https://raw.githubusercontent.com/pollinations/pollinations/master/APIDOCS.md
+ *     - "Endpoint: GET https://image.pollinations.ai/prompt/{prompt}"
+ *     - parameter table: prompt, model (default flux), width (default 1024),
+ *       height (default 1024), seed, nologo ("Remove the Pollinations
+ *       watermark (needs account)"), enhance, private
+ *     - "You can use Pollinations.AI without signing up"
+ *
+ * The CURRENT docs (default `main` branch + the served OpenAPI document) say
+ * the opposite:
+ *   - base URL is https://gen.pollinations.ai, endpoint GET /image/{prompt}
+ *   - "Get an API key"; "Everything else | Bearer key required"
+ *   - the string `nologo` occurs ZERO times in main/APIDOCS.md
  *   Source: https://raw.githubusercontent.com/pollinations/pollinations/main/APIDOCS.md
  *   Source: https://gen.pollinations.ai/openapi.json
  *
- * Auth note: the current docs require a bearer key for image generation
- * ("Everything else | Bearer key required unless the endpoint documents
- * ?key= support"). This script therefore sends ?key= ONLY when
- * POLLINATIONS_API_KEY is present in the environment, and otherwise sends no
- * key at all so the probe can report exactly what the live API does.
+ * Please confirm which surface is authoritative. See U2/U6 in
+ * docs/provider-facts.md.
  *
- * No API key is ever hardcoded. Prints status lines only.
+ * No API key is hardcoded and no auth header is sent. Prints status lines only.
  */
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-const BASE_URL = "https://gen.pollinations.ai";
+const BASE_URL = "https://image.pollinations.ai/prompt";
 const PROMPT = "A single blue circle on a white background.";
 
 function log(message) {
@@ -43,12 +56,16 @@ async function main() {
   const probeDir = path.join("docs", "probe");
   mkdirSync(probeDir, { recursive: true });
 
-  const url = new URL(`${BASE_URL}/image/${encodeURIComponent(PROMPT)}`);
-  const key = (process.env.POLLINATIONS_API_KEY || "").trim();
-  if (key !== "") url.searchParams.set("key", key);
+  const url = new URL(`${BASE_URL}/${encodeURIComponent(PROMPT)}`);
+  // Parameters documented on the stale master-branch APIDOCS.md parameter
+  // table. `nologo` is UNVERIFIED against current docs.
+  url.searchParams.set("width", "1024");
+  url.searchParams.set("height", "1024");
+  url.searchParams.set("model", "flux");
+  url.searchParams.set("nologo", "true");
 
-  log(`INFO endpoint ${BASE_URL}/image/{prompt}`);
-  log(key !== "" ? "INFO sending API key via ?key=" : "INFO sending no API key");
+  log(`INFO endpoint ${BASE_URL}/{prompt}`);
+  log("INFO sending no API key");
 
   const response = await fetch(url, { method: "GET" });
   const contentType = response.headers.get("content-type") || "unknown";

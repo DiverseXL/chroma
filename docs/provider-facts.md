@@ -11,8 +11,52 @@ Rules used while writing this file:
   guess.
 - Where two live sources disagree, both are shown under
   [Conflicting sources](#conflicting-sources).
-- No probe has been run yet. Facts marked *probe-dependent* can only be settled
-  by `scripts/probe-google.mjs` / `scripts/probe-pollinations.mjs`.
+- Facts taken from a real API response are marked **observed** and quote the
+  response verbatim.
+
+## Probe results (2026-10-10)
+
+Both probes were run once. Raw bodies are saved in `docs/probe/`.
+
+### Observed: Google image generation was refused by quota
+
+Request: `POST /v1beta/interactions` with `model = gemini-nano-banana-2.1`.
+HTTP **429**. Body of `docs/probe/google-generate.json`, verbatim:
+
+```json
+{"error":{"message":"Rate limit exceeded for model gemini-nano-banana-2.1 (limit: 0 requests per day on Free Tier). Please upgrade your tier at https://ai.dev/rate-limit.","code":"too_many_requests"}}
+```
+
+This partly settles U1: the Free Tier allowance for that image model is
+**0 requests per day**. It also confirms the A4 reading of the pricing page
+that image output is not on the free tier.
+
+### Observed: Google vision model is closed to new users
+
+Request: `POST /v1beta/interactions` with `model = gemini-2.5-flash`.
+HTTP **404**. Body of `docs/probe/google-vision.json`, verbatim:
+
+```json
+{"error":{"message":"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements.","code":"not_found"}}
+```
+
+This settles U7. The API itself names the replacement: `gemini-3.8-flash`.
+The failure is **model availability**, not the endpoint - changing the URL
+alone cannot fix it.
+
+### Observed error envelope
+
+Both failures used the same shape, which is what the probe scripts save:
+
+```json
+{"error":{"message":"<string>","code":"<string>"}}
+```
+
+### Not observed
+
+No successful Google call has happened yet, and
+`docs/probe/pollinations.png` has not been produced, so U2/U5/U6/U9 remain
+open.
 
 ---
 
@@ -81,10 +125,19 @@ Access caveat, verbatim from
 > API. For any new projects, use our latest models: 3.5 Flash-Lite or 3.8 Flash.
 
 So `gemini-2.5-flash` is confirmed as a vision-capable model, but a brand-new
-project may be refused. The same page points to `gemini-3.5-flash-lite` and
-`gemini-3.8-flash` as the recommended replacements. Whether those newer models
-are vision-capable on the Interactions API is **UNCONFIRMED** — see the
-register.
+project may be refused.
+
+**Observed (2026-10-10):** a fresh project *is* refused. A live call returned
+HTTP 404 with "This model models/gemini-2.5-flash is no longer available to new
+users. Please update your code to use models/gemini-3.8-flash for the latest
+features and improvements."
+
+The named replacement `gemini-3.8-flash` is confirmed vision-capable on its
+own model page - supported inputs are "Text, Image, Video, Audio, and PDF".
+
+Source: <https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash>
+
+`GOOGLE_MODEL_VISION` therefore defaults to `gemini-3.8-flash`.
 
 ### A4. Free tier limits
 
@@ -328,6 +381,40 @@ So the confirmed response path is **`output_image.data`** (base64 string), plus
 > than asserting a wrapper, and it writes the complete raw body to
 > `docs/probe/google-generate.json` so the real shape can be recorded after the
 > first run. See U5.
+
+#### REST - `models.generateContent` (used by the probe)
+
+Source: <https://ai.google.dev/api/generate-content>
+
+Endpoint, verbatim:
+
+> post `https://generativelanguage.googleapis.com/v1beta/{model=models/*}:generateContent`
+
+where `model` is `models/{model}`.
+
+Documented request-body fields used by the probe:
+
+| Field | Where documented |
+| --- | --- |
+| `contents[]` | "Required. The content of the current conversation with the model." |
+| `generationConfig` | "Optional. Configuration options for model generation and outputs." |
+| `contents[].parts[]` | curl samples: `{"parts":[{"text": "..."}]}` |
+
+Part shape from the same page's image curl sample (snake_case, as printed):
+
+```json
+{"contents": [{"parts": [{"text": "Tell me about this instrument"},
+  {"inline_data": {"mime_type": "image/jpeg", "data": "<BASE64>"}}]}]}
+```
+
+`inlineData` / `mimeType` are the camelCase protobuf-JSON equivalents of the
+`inline_data` / `mime_type` printed above; the script flags them UNVERIFIED.
+
+Documented response fields used by the probe: `candidates[]` →
+`content.parts[]`, each part carrying `text` or inline image data. The page's
+own sample reads them with `jq ".candidates[].content.parts[].text"`.
+
+`generationConfig.responseModalities` is **UNVERIFIED** - see U9.
 
 #### JavaScript SDK
 
@@ -609,14 +696,15 @@ published on either page.
 
 | ID | Fact | Status | What is missing / how to settle it |
 | --- | --- | --- | --- |
-| U1 | Gemini free-tier **RPM**, **RPD**, and **IPM** for the image models | UNCONFIRMED | The live rate-limits page publishes no per-model table; it defers to the signed-in AI Studio rate-limit page. Need: the values shown at <https://aistudio.google.com/> for this project, or limit headers / a `429` body from a real `scripts/probe-google.mjs` run. |
+| U1 | Gemini free-tier **RPM**, **RPD**, and **IPM** for the image models | **Partly resolved by observation** | Observed RPD for `gemini-nano-banana-2.1` = **0** ("limit: 0 requests per day on Free Tier", `docs/probe/google-generate.json`). RPM/IPM, and the allowance for `gemini-3.1-flash-image`, are still unknown. Need: the signed-in AI Studio rate-limit page, or a run of the corrected probe. |
 | U2 | Pollinations **`nologo`** parameter | UNCONFIRMED | The string does not occur in `main/APIDOCS.md` or `openapi.json`. Need: either a mention in the current docs, or an observed effect in a real probe response. Do not pass it until then. |
 | U3 | Pollinations numeric **rate limits** (requests/minute or /day) for a normal `sk_` key | UNCONFIRMED | Docs only give `429 RATE_LIMITED`, `Retry-After`, and the legacy `1 pollen per IP per hour`. Need: a documented limits page, the key settings at <https://enter.pollinations.ai/keys>, or measured `429` behaviour. |
 | U4 | Whether Pollinations image generation can be used at **zero cost** | UNCONFIRMED | Current docs describe Pollen credits, `402 PAYMENT_REQUIRED`, and `paid_only` model filtering; no free-tier statement found. Need: a documented free allowance, or a successful keyless/`?key=` image response from the probe. |
-| U5 | Exact **raw JSON wrapper** around `output_image` in the Gemini REST response | UNCONFIRMED | No doc page shows the response body. Need: `docs/probe/google-generate.json` after the first probe run; the probe walks the body for `output_image.data` rather than assuming a wrapper. |
-| U6 | What `GET /image/{prompt}` returns **without** a key | UNCONFIRMED (probe-dependent) | Docs say a key is required. Need: `scripts/probe-pollinations.mjs` output (status + body). |
-| U7 | Whether newer Gemini text models (e.g. `gemini-3.5-flash-lite`, `gemini-3.8-flash`) are **vision-capable** for the critic role | UNCONFIRMED | <https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash> recommends them as replacements but the vision support of each was not verified on its own model page. Need: the corresponding `ai.google.dev/gemini-api/docs/models/<id>` pages. |
+| U5 | Exact **success response shape** for a Gemini image call | UNCONFIRMED | The first probe never succeeded, so only the error envelope was observed. Need: a successful `candidates[].content.parts[].inlineData.data` payload. |
+| U6 | Whether the legacy keyless Pollinations endpoint still works | UNCONFIRMED | The probe now targets `https://image.pollinations.ai/prompt/{prompt}` with no key - supported by the stale `master` docs, contradicted by the current `main` docs. Need: one run of `scripts/probe-pollinations.mjs`. |
+| U7 | Which vision model to use for the critic role | **Resolved by observation** | `gemini-2.5-flash` returns 404 for new users and the API directs callers to `gemini-3.8-flash`, whose model page lists image input. `GOOGLE_MODEL_VISION=gemini-3.8-flash`. |
 | U8 | Whether a **paid** provider is required for image output (fal.ai etc.) | Out of scope | Explicitly excluded by the task: "fal.ai is out of scope for this step". |
+| U9 | Field name/casing for requesting image output from `generateContent` | UNVERIFIED | `generationConfig.responseModalities` with `["TEXT","IMAGE"]` is sent by the probe but appears on no ai.google.dev page loaded in this pass. Need: a page confirming the field, or a successful run. |
 
 ---
 
