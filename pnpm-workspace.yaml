@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# unrs-resolver's postinstall only links the prebuilt napi-rs binding for the
+# current platform; it is required by eslint's import resolver.
+allowBuilds:
+  unrs-resolver: true

@@ -1,0 +1,23 @@
+{
+  "name": "chroma",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chroma - provider verification scaffold for Banana Hacks 2026",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "pnpm --filter @chroma/web dev",
+    "build": "pnpm -r build",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "probe": "node scripts/probe-google.mjs && node scripts/probe-pollinations.mjs"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@eslint/js": "^9",
+    "eslint": "^9",
+    "eslint-config-next": "^15",
+    "globals": "^16",
+    "typescript": "^5",
+    "typescript-eslint": "^8"
+  }
+}
