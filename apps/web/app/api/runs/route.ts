@@ -7,7 +7,22 @@ import {
 } from "@chroma/core";
 import { prisma } from "@chroma/db";
 import { NextResponse } from "next/server";
-import { providers, scheduler } from "@/lib/engine";
+import { eventBus, providers, scheduler } from "@/lib/engine";
+
+export async function GET(): Promise<NextResponse> {
+  const runs = await prisma.run.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      brief: true,
+      status: true,
+      createdAt: true,
+    },
+  });
+
+  return NextResponse.json({ runs });
+}
 
 /**
  * Handles creation of a new generation workflow run.
@@ -116,6 +131,35 @@ export async function POST(req: Request): Promise<NextResponse> {
         fromPort: edge.fromPort,
         toPort: edge.toPort,
       },
+    });
+  }
+
+  const [persistedNodes, persistedEdges] = await Promise.all([
+    prisma.node.findMany({
+      where: { runId: run.id },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.edge.findMany({
+      where: { runId: run.id },
+      orderBy: { id: "asc" },
+    }),
+  ]);
+
+  await eventBus.publish(run.id, {
+    type: "run.created",
+    payload: run,
+  });
+  for (const node of persistedNodes) {
+    await eventBus.publish(run.id, {
+      type: "node.created",
+      nodeId: node.id,
+      payload: node,
+    });
+  }
+  for (const edge of persistedEdges) {
+    await eventBus.publish(run.id, {
+      type: "edge.created",
+      payload: edge,
     });
   }
 
