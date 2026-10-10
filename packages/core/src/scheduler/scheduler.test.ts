@@ -149,7 +149,7 @@ describe("Scheduler", () => {
     expect(result.status).toBe("SUCCEEDED");
   });
 
-  it("runs fan-out graph concurrently (assert wall-clock < serial time)", async () => {
+  it("runs fan-out graph with all branches active concurrently", async () => {
     const db = createMockDb();
     const eventBus = new EventBus({ db });
     let activeGenerations = 0;
