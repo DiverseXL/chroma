@@ -52,11 +52,55 @@ Both failures used the same shape, which is what the probe scripts save:
 {"error":{"message":"<string>","code":"<string>"}}
 ```
 
-### Not observed
+### Observed: Pollinations legacy keyless endpoint WORKS
 
-No successful Google call has happened yet, and
-`docs/probe/pollinations.png` has not been produced, so U2/U5/U6/U9 remain
-open.
+One run of `scripts/probe-pollinations.mjs` (no API key sent, no auth header)
+returned a real image. `docs/probe/pollinations.png` is a valid **JPEG**, 29,743
+bytes, **768x768**, `components 3`, EXIF manufacturer `sana`.
+
+So the current `main` documentation's "Bearer key required" claim does not
+hold for the legacy `image.pollinations.ai` host. See U6 (resolved).
+
+Note: the requested `width=1024&height=1024` was not honoured - the image came
+back 768x768. That is an observation about this response only; the parameter
+contract is discussed in U2.
+
+### Observed: `generateContent` URL/header/body format is correct
+
+A live call to
+`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent`
+with header `x-goog-api-key` and body `{"contents":[{"parts":[{"text":"Say OK"}]}]}`
+returned **HTTP 200** with `candidates[0].content.parts[0].text = "OK"`.
+
+That confirms the endpoint shape, the `x-goog-api-key` header, the
+`contents[].parts[].text` request body and the
+`candidates[].content.parts[].text` response path.
+
+### Observed: the model catalogue (read-only `ListModels`)
+
+`GET /v1beta/models` returned **HTTP 200** with 62 models for this key. Image
+and Flash entries included:
+
+| Model name (as returned) | supportedGenerationMethods |
+| --- | --- |
+| `models/gemini-nano-banana-2.1` | generateContent, countTokens, batchGenerateContent |
+| `models/gemini-3.1-flash-image` | generateContent, countTokens, batchGenerateContent |
+| `models/gemini-3.1-flash-lite-image` | generateContent, countTokens, batchGenerateContent |
+| `models/gemini-3-pro-image` | generateContent, countTokens, batchGenerateContent |
+| `models/gemini-2.5-flash` | generateContent, countTokens, createCachedContent, batchGenerateContent |
+| `models/gemini-3.8-flash` | generateContent, countTokens, createCachedContent, batchGenerateContent |
+
+Names are returned in `models/{id}` form, which is also the URL path segment.
+
+Caveat worth knowing: `ListModels` still lists `models/gemini-2.5-flash`, yet a
+`generateContent` call against it returned 404 "no longer available to new
+users". Listing a model does not mean the key is entitled to call it.
+
+### Not yet observed
+
+No successful Google **generation** has happened yet (the image model reports a
+0/day free allowance, see U1), so U5 and U9 remain open. The image bytes for
+`docs/probe/google-generate.png` have not been produced.
 
 ---
 
@@ -699,9 +743,9 @@ published on either page.
 | U1 | Gemini free-tier **RPM**, **RPD**, and **IPM** for the image models | **Partly resolved by observation** | Observed RPD for `gemini-nano-banana-2.1` = **0** ("limit: 0 requests per day on Free Tier", `docs/probe/google-generate.json`). RPM/IPM, and the allowance for `gemini-3.1-flash-image`, are still unknown. Need: the signed-in AI Studio rate-limit page, or a run of the corrected probe. |
 | U2 | Pollinations **`nologo`** parameter | UNCONFIRMED | The string does not occur in `main/APIDOCS.md` or `openapi.json`. Need: either a mention in the current docs, or an observed effect in a real probe response. Do not pass it until then. |
 | U3 | Pollinations numeric **rate limits** (requests/minute or /day) for a normal `sk_` key | UNCONFIRMED | Docs only give `429 RATE_LIMITED`, `Retry-After`, and the legacy `1 pollen per IP per hour`. Need: a documented limits page, the key settings at <https://enter.pollinations.ai/keys>, or measured `429` behaviour. |
-| U4 | Whether Pollinations image generation can be used at **zero cost** | UNCONFIRMED | Current docs describe Pollen credits, `402 PAYMENT_REQUIRED`, and `paid_only` model filtering; no free-tier statement found. Need: a documented free allowance, or a successful keyless/`?key=` image response from the probe. |
+| U4 | Whether Pollinations image generation can be used at **zero cost** | **Partly resolved by observation** | A keyless call to the legacy host succeeded and returned a real image, so at least that path costs nothing. Whether the current `gen.pollinations.ai` API has any free allowance is still unknown. |
 | U5 | Exact **success response shape** for a Gemini image call | UNCONFIRMED | The first probe never succeeded, so only the error envelope was observed. Need: a successful `candidates[].content.parts[].inlineData.data` payload. |
-| U6 | Whether the legacy keyless Pollinations endpoint still works | UNCONFIRMED | The probe now targets `https://image.pollinations.ai/prompt/{prompt}` with no key - supported by the stale `master` docs, contradicted by the current `main` docs. Need: one run of `scripts/probe-pollinations.mjs`. |
+| U6 | Whether the legacy keyless Pollinations endpoint still works | **Resolved by observation** | Yes. One run with no API key produced a valid 768x768 JPEG (29,743 bytes) at `docs/probe/pollinations.png`. The current `main` docs' "key required" claim does not hold for this legacy host. |
 | U7 | Which vision model to use for the critic role | **Resolved by observation** | `gemini-2.5-flash` returns 404 for new users and the API directs callers to `gemini-3.8-flash`, whose model page lists image input. `GOOGLE_MODEL_VISION=gemini-3.8-flash`. |
 | U8 | Whether a **paid** provider is required for image output (fal.ai etc.) | Out of scope | Explicitly excluded by the task: "fal.ai is out of scope for this step". |
 | U9 | Field name/casing for requesting image output from `generateContent` | UNVERIFIED | `generationConfig.responseModalities` with `["TEXT","IMAGE"]` is sent by the probe but appears on no ai.google.dev page loaded in this pass. Need: a page confirming the field, or a successful run. |
@@ -710,7 +754,7 @@ published on either page.
 
 ## Probe commands
 
-Neither probe has been run. From the repository root, in PowerShell:
+Re-run after any change. From the repository root, in PowerShell:
 
 ```powershell
 # 1. one-time setup
