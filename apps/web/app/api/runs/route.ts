@@ -6,8 +6,78 @@ import {
   type CompiledGraph,
 } from "@chroma/core";
 import { prisma } from "@chroma/db";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { eventBus, providers, scheduler } from "@/lib/engine";
+
+// Vercel grants the full 60s Hobby-plan function timeout only when the route
+// opts in explicitly. See the after() call in POST below.
+export const maxDuration = 60;
+
+// Prisma and the SSE streaming route both require the Node.js runtime.
+export const runtime = "nodejs";
+
+/**
+ * In-memory rate limiter for run creation, protecting provider spend
+ * (Cloudflare/KIE credits) and keeping demo instances abuse-resistant.
+ *
+ * Limits: 3 runs per IP per 30 minutes, 25 runs globally per 24 hours.
+ *
+ * NOTE: the buckets live in this module's memory, so a serverless cold start
+ * or dev-server restart resets every counter. That is acceptable for local
+ * demos but must move to a durable store (Redis/DB) before production deploy.
+ */
+const IP_RUN_LIMIT = 3;
+const IP_WINDOW_MS = 30 * 60 * 1000;
+const GLOBAL_RUN_LIMIT = 25;
+const GLOBAL_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+interface RateBucket {
+  count: number;
+  resetAt: number;
+}
+
+const ipBuckets = new Map<string, RateBucket>();
+let globalBucket: RateBucket = {
+  count: 0,
+  resetAt: Date.now() + GLOBAL_WINDOW_MS,
+};
+
+/**
+ * Checks and consumes one run slot for the given client.
+ *
+ * @param ip Client IP key.
+ * @param now Current epoch milliseconds.
+ * @returns null when a slot was consumed, otherwise the seconds to wait.
+ */
+function consumeRunSlot(ip: string, now: number): number | null {
+  if (now >= globalBucket.resetAt) {
+    globalBucket = { count: 0, resetAt: now + GLOBAL_WINDOW_MS };
+  }
+
+  let bucket = ipBuckets.get(ip);
+  if (!bucket || now >= bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + IP_WINDOW_MS };
+    ipBuckets.set(ip, bucket);
+  }
+
+  // Opportunistic cleanup so long-running processes do not grow unbounded.
+  if (ipBuckets.size > 128) {
+    for (const [key, entry] of ipBuckets) {
+      if (now >= entry.resetAt) ipBuckets.delete(key);
+    }
+  }
+
+  if (bucket.count >= IP_RUN_LIMIT) {
+    return Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+  }
+  if (globalBucket.count >= GLOBAL_RUN_LIMIT) {
+    return Math.max(1, Math.ceil((globalBucket.resetAt - now) / 1000));
+  }
+
+  bucket.count += 1;
+  globalBucket.count += 1;
+  return null;
+}
 
 export async function GET(): Promise<NextResponse> {
   const runs = await prisma.run.findMany({
@@ -32,6 +102,23 @@ export async function GET(): Promise<NextResponse> {
  * @returns JSON response with the generated runId.
  */
 export async function POST(req: Request): Promise<NextResponse> {
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const retryAfterSeconds = consumeRunSlot(ip, Date.now());
+  if (retryAfterSeconds !== null) {
+    return NextResponse.json(
+      {
+        error: "rate_limited",
+        message: `Rate limit reached: ${IP_RUN_LIMIT} runs per IP per 30 minutes and ${GLOBAL_RUN_LIMIT} runs per day. Retry in ${retryAfterSeconds}s.`,
+        retryAfterSeconds,
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(retryAfterSeconds) },
+      },
+    );
+  }
+
   const body = (await req.json().catch(() => ({}))) as { brief?: string };
   const brief = typeof body?.brief === "string" ? body.brief : "Storyboard";
 
@@ -204,9 +291,21 @@ export async function POST(req: Request): Promise<NextResponse> {
     ),
   };
 
-  // Launch Scheduler in background (do not block HTTP response)
-  scheduler.run(run.id, scheduledGraph).catch((err) => {
-    console.error(`Scheduler background execution error for run ${run.id}:`, err);
+  // Launch the scheduler after the response is flushed. Vercel kills the
+  // function as soon as the response is returned, so the fire-and-forget call
+  // used previously was cancelled mid-run. after() keeps the invocation alive
+  // until this callback settles.
+  //
+  // NOTE: the Hobby plan caps function execution at 60s (see maxDuration).
+  // A run that needs more time must move to a persistent host (Railway, a
+  // long-lived container, or a queue + worker) instead of Vercel serverless.
+  after(async () => {
+    await scheduler.run(run.id, scheduledGraph).catch((err) => {
+      console.error(
+        `Scheduler background execution error for run ${run.id}:`,
+        err,
+      );
+    });
   });
 
   return NextResponse.json({ runId: run.id });

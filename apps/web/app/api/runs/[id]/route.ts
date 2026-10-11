@@ -37,6 +37,22 @@ export async function GET(
     prisma.artifact.findMany({
       where: { node: { runId: id } },
       orderBy: { createdAt: "asc" },
+      // Artifact.data holds the raw image bytes (now persisted in Postgres).
+      // The canvas loads those through /api/artifacts/:id, so embedding them
+      // here would balloon this snapshot into multi-MB JSON (Vercel caps
+      // response bodies at 4.5 MB on Hobby).
+      select: {
+        id: true,
+        nodeId: true,
+        kind: true,
+        mimeType: true,
+        storageKey: true,
+        sha256: true,
+        width: true,
+        height: true,
+        metadata: true,
+        createdAt: true,
+      },
     }),
     prisma.event.aggregate({
       where: { runId: id },

@@ -2,12 +2,16 @@ import { readArtifact } from "@chroma/core";
 import { prisma } from "@chroma/db";
 import { NextResponse } from "next/server";
 
+// Prisma only ships node_modules-native binaries, so this route must run on
+// the Node.js runtime (not the Edge runtime) in serverless deployments.
+export const runtime = "nodejs";
+
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 /**
- * Serves raw binary artifacts stored on local disk.
+ * Serves raw binary artifacts stored in Postgres.
  *
  * @param _req Incoming HTTP request.
  * @param context Dynamic route parameters resolving the artifact ID.

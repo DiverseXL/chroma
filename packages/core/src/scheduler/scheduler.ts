@@ -5,10 +5,10 @@ import type { ProviderSet } from "../executors/types.js";
 import type { CompiledGraph } from "../graph/compiler.js";
 import type { ProviderAdapter } from "../provider/adapter.js";
 import {
-  ProviderContentFilterError,
-  ProviderRateLimitError,
+  isProviderContentFilterError,
+  isProviderRateLimitError,
 } from "../provider/adapter.js";
-import { writeArtifact } from "../storage/local.js";
+import { writeArtifact } from "../storage/postgres.js";
 import type {
   Artifact,
   EdgeSpec,
@@ -609,10 +609,10 @@ export class Scheduler {
           regeneratedNodeId,
         };
       } catch (error) {
-        const isRateLimit = error instanceof ProviderRateLimitError;
+        const isRateLimit = isProviderRateLimitError(error);
         // Content-filter rejections are deterministic: the identical prompt
         // would be rejected again, so this failure is terminal on first sight.
-        const isNonRetryable = error instanceof ProviderContentFilterError;
+        const isNonRetryable = isProviderContentFilterError(error);
         const errorMessage =
           error instanceof Error ? error.message : String(error);
 

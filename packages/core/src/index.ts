@@ -9,5 +9,5 @@ export * from "./graph/compiler.js";
 export * from "./provider/adapter.js";
 export * from "./provider/mock.js";
 export * from "./scheduler/scheduler.js";
-export * from "./storage/local.js";
+export * from "./storage/postgres.js";
 export * from "./types/index.js";

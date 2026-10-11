@@ -1,4 +1,4 @@
-import { readArtifact } from "../storage/local.js";
+import { readArtifact } from "../storage/postgres.js";
 import type { ExecutionContext } from "./types.js";
 
 /**

@@ -1,13 +1,6 @@
 import type { RetryingPrismaClient } from "@chroma/db";
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
-import * as path from "node:path";
 import type { Artifact, ArtifactKind } from "../types/index.js";
-
-/**
- * Base directory where binary artifacts are written.
- */
-const DEFAULT_STORAGE_DIR = path.resolve(process.cwd(), ".chroma", "artifacts");
 
 /**
  * Determines file extension from MIME type.
@@ -47,7 +40,7 @@ function getArtifactKind(mimeType: string): ArtifactKind {
 }
 
 /**
- * Writes an artifact's binary payload to local disk and creates an Artifact row in the database.
+ * Writes an artifact's binary payload into the Artifact.data column.
  *
  * @param db PrismaClient instance.
  * @param nodeId The ID of the node that generated this artifact.
@@ -68,13 +61,7 @@ export async function writeArtifact(
   metadata?: Record<string, unknown>,
 ): Promise<Artifact> {
   const hash = createHash("sha256").update(bytes).digest("hex");
-  const ext = getExtension(mimeType);
-  const fileName = `${hash}${ext}`;
-  const filePath = path.join(DEFAULT_STORAGE_DIR, fileName);
-
-  await fs.mkdir(DEFAULT_STORAGE_DIR, { recursive: true });
-  await fs.writeFile(filePath, bytes);
-
+  const storageKey = `${hash}${getExtension(mimeType)}`;
   const kind = getArtifactKind(mimeType);
 
   const artifactRecord = await db.artifact.create({
@@ -82,8 +69,9 @@ export async function writeArtifact(
       nodeId,
       kind,
       mimeType,
-      storageKey: filePath,
+      storageKey,
       sha256: hash,
+      data: Buffer.from(bytes),
       width: width ?? null,
       height: height ?? null,
       metadata: metadata ? (metadata as object) : undefined,
@@ -94,12 +82,12 @@ export async function writeArtifact(
 }
 
 /**
- * Reads an artifact's binary payload from local disk using its database record.
+ * Reads an artifact's binary payload from the Artifact.data column.
  *
  * @param db PrismaClient instance.
  * @param artifactId The ID of the artifact to read.
  * @returns Binary content and MIME type.
- * @throws {Error} If artifact record or file on disk does not exist.
+ * @throws {Error} If the artifact record is missing or has no stored bytes.
  */
 export async function readArtifact(
   db: RetryingPrismaClient,
@@ -109,14 +97,12 @@ export async function readArtifact(
     where: { id: artifactId },
   });
 
-  if (!record) {
+  if (!record?.data) {
     throw new Error(`Artifact not found: "${artifactId}"`);
   }
 
-  const fileBytes = await fs.readFile(record.storageKey);
-
   return {
-    bytes: new Uint8Array(fileBytes),
+    bytes: new Uint8Array(record.data),
     mimeType: record.mimeType,
   };
 }

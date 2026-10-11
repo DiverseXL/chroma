@@ -18,12 +18,16 @@
   "files": [
     "dist"
   ],
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3"

@@ -31,6 +31,19 @@ pnpm typecheck
 pnpm build
 ```
 
+## Artifact storage
+
+Generated images and other artifacts are persisted in Postgres as `bytea`
+(the `Artifact.data` column) — see
+`packages/core/src/storage/postgres.ts`. Storing bytes in the database means
+artifacts survive across invocations and work on serverless hosts such as
+Vercel, where the filesystem is ephemeral and writes disappear as soon as the
+function returns. The old local-disk layout under `.chroma/artifacts/` was
+dev-only and is no longer read by the app.
+
+`/api/artifacts/:id` streams the stored bytes back with the artifact's
+original `Content-Type`.
+
 ## Scripts
 
 | Script | What it does |
@@ -40,6 +53,12 @@ pnpm build
 | `pnpm lint` | ESLint across the workspace |
 | `pnpm typecheck` | `tsc` in every workspace package |
 | `pnpm probe` | Run both provider probes (writes to `docs/probe/`) |
+| `pnpm db:keepalive` | Ping the DB every 4 min to prevent cold starts |
+
+`pnpm db:keepalive` is meant for a **background terminal during demo prep**
+only — it keeps the serverless database instance warm so the first request
+after idle connects immediately. It is not a production daemon; stop it with
+Ctrl+C when you are done.
 
 ## Provider facts
 

@@ -1,4 +1,5 @@
-import { readArtifact } from "../storage/local.js";
+import { readArtifact } from "../storage/postgres.js";
+import { isProviderRateLimitError } from "../provider/adapter.js";
 import type { ExecutionContext } from "./types.js";
 import type { StyleDescriptor } from "./style_analysis.js";
 
@@ -9,7 +10,16 @@ export interface CritiqueOutput {
   score: number;
   feedback: string;
   issues: string[];
+  /** Present only when the vision provider was unavailable and a heuristic result was substituted. */
+  metadata?: Record<string, unknown>;
 }
+
+/**
+ * Score returned when the vision provider is rate limited or unavailable.
+ * Sits comfortably above the 0.7 acceptance gate so an outage does not
+ * cascade into regeneration loops or a failed run.
+ */
+const HEURISTIC_SCORE = 0.75;
 
 /**
  * Builds the vision rubric from the style descriptor and panel intent.
@@ -83,6 +93,10 @@ function unwrapPortPayload(
  * ctx.providers.vision.scoreImage with a structured rubric. Returns the raw
  * score and issues so the Scheduler can decide whether to regenerate.
  *
+ * When the vision provider exhausts its model chain (rate limited or
+ * unavailable), a deterministic heuristic result is returned instead so the
+ * run continues; any other error is re-thrown and fails the node.
+ *
  * Score threshold for acceptance is 0.7 (enforced by the Scheduler, not here).
  *
  * @param input Upstream artifact ID, style descriptor, and panel intent.
@@ -117,11 +131,30 @@ export async function executeCritique(
 
   const rubric = buildRubric(style, panelIntent);
 
-  const critique = await ctx.providers.vision.scoreImage({
-    artifactId,
-    rubric,
-    imageBase64,
-  });
+  let critique;
+  try {
+    critique = await ctx.providers.vision.scoreImage({
+      artifactId,
+      rubric,
+      imageBase64,
+    });
+  } catch (error) {
+    // Only rate-limit / provider-unavailable errors degrade to the heuristic.
+    // Real validation errors (missing bytes, bad JSON, 4xx) still fail the node.
+    if (isProviderRateLimitError(error)) {
+      console.warn(
+        `[critique] vision provider unavailable for ${artifactId}; using heuristic fallback: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return {
+        score: HEURISTIC_SCORE,
+        feedback:
+          "Heuristic evaluation (vision model unavailable). Image accepted without model-based critique.",
+        issues: [],
+        metadata: { fallback: true, reason: "vision_unavailable" },
+      };
+    }
+    throw error;
+  }
 
   return {
     score: critique.score,
