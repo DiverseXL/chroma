@@ -31,8 +31,14 @@ Return strict JSON matching this schema:
 Every field must be specific and concrete. No placeholder text. If the brief
 is vague, make confident choices that fit its tone. Return only JSON.`;
 
-const SCENE_PLANNER_SYSTEM_PROMPT = `You are the Scene Planner in Chroma. Given a Story Bible and a panel index
-and total panel count, describe what happens in that specific panel.
+const SCENE_PLANNER_SYSTEM_PROMPT = `You are the Scene Planner in Chroma. You are planning panel {panelIndex} of
+{totalPanelCount} panels. The overall arc is: {overallArc}. Panels already
+planned: {previousScenes}. Your panel must depict the NEXT distinct moment in
+the arc, not a repeat of a previous panel. Each panel should show visible
+progression.
+
+Given the Story Bible and this panel's position in the arc, describe what
+happens in this specific panel.
 
 Return strict JSON matching this schema:
 {
@@ -464,23 +470,43 @@ export async function executePlan(
     const bible = parseStoryBible(bibleResult.parsed);
     bible.panelCount = inferPanelCount(briefText, requestedPanelCount ?? bible.panelCount);
 
-    const sceneResults = await Promise.all(
-      Array.from({ length: bible.panelCount }, async (_, offset) => {
-        const panelIndex = offset + 1;
-        const result = await ctx.providers.text.completeText({
-          system: SCENE_PLANNER_SYSTEM_PROMPT,
-          prompt:
-            `Story Bible:\n${JSON.stringify(bible)}\n\n` +
-            `Panel index: ${panelIndex}\nTotal panel count: ${bible.panelCount}`,
-          json: true,
-          temperature: 0.5,
-        });
-        return {
-          scene: parseScenePlan(result.parsed, panelIndex),
-          metadata: result.metadata,
-        };
-      }),
-    );
+    const sceneResults: Array<{
+      scene: ScenePlan;
+      metadata?: Record<string, unknown>;
+    }> = [];
+    for (let offset = 0; offset < bible.panelCount; offset++) {
+      const panelIndex = offset + 1;
+      const previousScenes =
+        sceneResults.length === 0
+          ? "None; this is the opening moment of the arc."
+          : sceneResults
+              .map(
+                ({ scene }) =>
+                  `Panel ${scene.panelIndex}: ${scene.sceneDescription}`,
+              )
+              .join("\n");
+      const system = SCENE_PLANNER_SYSTEM_PROMPT.replaceAll(
+        "{panelIndex}",
+        String(panelIndex),
+      )
+        .replaceAll("{totalPanelCount}", String(bible.panelCount))
+        .replace("{overallArc}", bible.overallArc)
+        .replace("{previousScenes}", previousScenes);
+      const result = await ctx.providers.text.completeText({
+        system,
+        prompt:
+          `Story Bible:\n${JSON.stringify(bible)}\n\n` +
+          `Panel index: ${panelIndex}\nTotal panel count: ${bible.panelCount}\n` +
+          `Overall arc: ${bible.overallArc}\n` +
+          `Panels already planned:\n${previousScenes}`,
+        json: true,
+        temperature: 0.5,
+      });
+      sceneResults.push({
+        scene: parseScenePlan(result.parsed, panelIndex),
+        metadata: result.metadata,
+      });
+    }
 
     const scenes = sceneResults.map(({ scene }) => scene);
     const providerMetadata = [

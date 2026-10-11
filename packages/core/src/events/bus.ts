@@ -16,7 +16,7 @@ export interface EventPublishInput {
 export type EventListener = (event: Event) => void;
 
 /**
- * Centralized transactional event bus for publishing, subscribing, and replaying run events.
+ * Event bus for publishing, subscribing, and replaying run events.
  */
 export class EventBus {
   private readonly db: RetryingPrismaClient;
@@ -32,39 +32,31 @@ export class EventBus {
 
   /**
    * Publishes an event to the persistent event store and notifies active in-process subscribers.
-   * Employs row-level locking on the Run row to prevent sequence race conditions under concurrency.
    *
    * @param runId The ID of the run.
    * @param event The event payload, type, and optional originating node ID.
    */
   async publish(runId: string, event: EventPublishInput): Promise<Event> {
-    const createdEvent = await this.db.$transaction(async (tx) => {
-      // Row-level lock on Run to serialize sequence assignment under concurrent node executions
-      try {
-        await tx.$executeRaw`SELECT 1 FROM "Run" WHERE id = ${runId} FOR UPDATE`;
-      } catch {
-        // Fallback for environments / test stubs where raw SQL locking is not supported
-      }
+    const sequences = await this.db.$queryRaw<Array<{ eventSequence: number }>>`
+      UPDATE "Run"
+      SET "eventSequence" = "eventSequence" + 1
+      WHERE id = ${runId}
+      RETURNING "eventSequence"
+    `;
+    const nextSequence = sequences[0]?.eventSequence;
+    if (typeof nextSequence !== "number") {
+      throw new Error(`Cannot publish event: run "${runId}" was not found`);
+    }
 
-      const agg = await tx.event.aggregate({
-        where: { runId },
-        _max: { sequence: true },
-      });
-
-      const nextSequence = (agg._max.sequence ?? 0) + 1;
-
-      const record = await tx.event.create({
-        data: {
-          runId,
-          nodeId: event.nodeId ?? null,
-          type: event.type,
-          payload: (event.payload ?? {}) as object,
-          sequence: nextSequence,
-        },
-      });
-
-      return record as Event;
-    });
+    const createdEvent = (await this.db.event.create({
+      data: {
+        runId,
+        nodeId: event.nodeId ?? null,
+        type: event.type,
+        payload: (event.payload ?? {}) as object,
+        sequence: nextSequence,
+      },
+    })) as Event;
 
     const listeners = this.subscribers.get(runId);
     if (listeners) {

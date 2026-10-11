@@ -82,20 +82,11 @@ function createMockDb(): RetryingPrismaClient {
         events.push(record);
         return record;
       },
-      aggregate: async ({ where }: { where: { runId: string } }) => {
-        const runEvents = events.filter((e) => e.runId === where.runId);
-        const maxSeq =
-          runEvents.length === 0
-            ? null
-            : Math.max(...runEvents.map((e) => Number(e.sequence)));
-        return { _max: { sequence: maxSeq } };
-      },
       findMany: async ({ where }: { where: { runId: string } }) => {
         return events.filter((e) => e.runId === where.runId);
       },
     },
-    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(mockDb),
-    $executeRaw: async () => 1,
+    $queryRaw: async () => [{ eventSequence: events.length + 1 }],
   };
 
   return mockDb as unknown as RetryingPrismaClient;

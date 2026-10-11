@@ -49,6 +49,7 @@ model Run {
   id          String     @id @default(cuid())
   brief       String
   status      RunStatus
+  eventSequence Int        @default(0)
   createdAt   DateTime   @default(now())
   completedAt DateTime?
   degraded    Boolean    @default(false)

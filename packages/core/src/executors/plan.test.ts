@@ -167,6 +167,18 @@ describe("executePlan Story Bible pipeline", () => {
       "Critique: Astronaut following glowing tracks",
     ]);
     expect(graph.metadata?.scenes).toEqual(scenePlans);
+    expect(completeText.mock.calls[1][0].system).toContain(
+      "The overall arc is: Mara emerges from the wreck and discovers the forest responding to her.",
+    );
+    expect(completeText.mock.calls[1][0].system).toMatch(
+      /You are planning panel 1 of\s+2 panels/,
+    );
+    expect(completeText.mock.calls[2][0].system).toMatch(
+      /Panels already\s+planned:\s+Panel 1: Mara climbs out of her crashed pod into the forest\./,
+    );
+    expect(completeText.mock.calls[2][0].system).toMatch(
+      /Your panel must depict the NEXT distinct moment in\s+the arc/,
+    );
     for (const scene of graph.metadata?.scenes as typeof scenePlans) {
       expect(scene.prompt).not.toBe("Panel 1");
       expect(scene.prompt.trim()).not.toBe("");
