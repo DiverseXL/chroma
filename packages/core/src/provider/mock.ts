@@ -46,6 +46,32 @@ export interface MockAdapterConfig {
  * assertions can rely on stable field names.
  */
 const CANNED_JSON: Record<string, unknown> = {
+  storyBible: {
+    panelCount: 4,
+    characters: [
+      {
+        name: "A traveler",
+        description: "The central character in the brief",
+        appearance: "A distinctive silhouette with practical clothing",
+      },
+    ],
+    locations: [
+      {
+        name: "The setting",
+        description: "A detailed location suited to the brief",
+        timeOfDay: "late afternoon",
+        atmosphere: "Atmospheric and cinematic",
+      },
+    ],
+    visualStyle: {
+      palette: "warm amber and deep indigo",
+      lighting: "golden hour, soft directional shadows",
+      mood: "cinematic, melancholic",
+      medium: "digital painting",
+      era: "contemporary",
+    },
+    overallArc: "The traveler moves from uncertainty toward discovery.",
+  },
   planner: {
     nodes: [
       {
@@ -138,8 +164,30 @@ const CANNED_JSON: Record<string, unknown> = {
  * @param system System prompt text.
  * @returns A canned JSON object that matches the keyword, or a generic default.
  */
-function selectCannedJson(system = ""): unknown {
+function selectCannedJson(system = "", prompt = ""): unknown {
   const lower = system.toLowerCase();
+  if (lower.includes("story architect")) {
+    return CANNED_JSON.storyBible;
+  }
+  if (lower.includes("scene planner")) {
+    const panelIndex = Number(prompt.match(/Panel index:\s*(\d+)/i)?.[1] ?? 1);
+    const panelCount = Number(
+      prompt.match(/Total panel count:\s*(\d+)/i)?.[1] ?? 4,
+    );
+    const subject = `Traveler crossing scene ${panelIndex}`;
+    const action = "walks toward a distant landmark";
+    return {
+      panelIndex,
+      sceneDescription: `The traveler walks toward a distant landmark in panel ${panelIndex}.`,
+      subject,
+      action,
+      cameraAngle: "wide establishing shot",
+      prompt:
+        `A traveler walks toward a distant landmark in panel ${panelIndex} of ${panelCount}, ` +
+        "framed in a wide establishing shot with warm amber colors and deep indigo shadows, " +
+        "golden hour lighting, a cinematic melancholic mood, and a detailed digital painting finish.",
+    };
+  }
   if (lower.includes("planner") || lower.includes("plan")) {
     return CANNED_JSON.planner;
   }
@@ -282,7 +330,7 @@ export class MockAdapter implements ProviderAdapter {
     this.checkFaultInjection();
 
     if (req.json) {
-      const parsed = selectCannedJson(req.system);
+      const parsed = selectCannedJson(req.system, req.prompt);
       const text = JSON.stringify(parsed);
       return { text, parsed, usage: { inputTokens: 10, outputTokens: 20 } };
     }

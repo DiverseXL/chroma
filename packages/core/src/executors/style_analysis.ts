@@ -1,4 +1,5 @@
 import type { ExecutionContext } from "./types.js";
+import type { StoryBible } from "./plan.js";
 
 /**
  * Result payload produced by style analysis.
@@ -9,7 +10,7 @@ export interface StyleDescriptor {
   mood: string;
   medium: string;
   era: string;
-  camera: string;
+  camera?: string;
 }
 
 /**
@@ -39,6 +40,15 @@ export async function executeStyleAnalysis(
   input: unknown,
   ctx: ExecutionContext,
 ): Promise<StyleDescriptor> {
+  const payload =
+    typeof input === "object" && input !== null
+      ? (input as Record<string, unknown>)
+      : {};
+  const bible = payload.storyBible as StoryBible | undefined;
+  if (bible?.visualStyle) {
+    return { ...bible.visualStyle };
+  }
+
   const brief =
     typeof input === "string"
       ? input

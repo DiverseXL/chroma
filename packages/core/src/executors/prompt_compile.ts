@@ -47,6 +47,18 @@ export async function executePromptCompile(
 
   if (typeof input === "object" && input !== null) {
     const inp = input as Record<string, unknown>;
+    if (
+      typeof inp.scenePlan === "object" &&
+      inp.scenePlan !== null &&
+      "prompt" in inp.scenePlan &&
+      typeof (inp.scenePlan as { prompt?: unknown }).prompt === "string" &&
+      (inp.scenePlan as { prompt: string }).prompt.trim()
+    ) {
+      return {
+        prompt: (inp.scenePlan as { prompt: string }).prompt.trim(),
+        panelIndex,
+      };
+    }
     if (typeof inp.style === "object" && inp.style !== null) {
       style = inp.style as StyleDescriptor;
     }

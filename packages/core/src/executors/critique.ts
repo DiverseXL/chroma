@@ -33,7 +33,26 @@ const HEURISTIC_SCORE = 0.75;
 function buildRubric(
   style: StyleDescriptor | undefined,
   panelIntent: string,
+  scenePlan?: {
+    subject: string;
+    action: string;
+    cameraAngle: string;
+  },
 ): string {
+  if (scenePlan) {
+    return (
+      `Evaluate this image against the following criteria:\n` +
+      `- Subject match: does the image contain ${scenePlan.subject}?\n` +
+      `- Action match: is ${scenePlan.action} happening?\n` +
+      `- Camera: is it a ${scenePlan.cameraAngle}?\n` +
+      `- Style: palette ${style?.palette ?? "cinematic colors"}, ` +
+      `lighting ${style?.lighting ?? "cinematic lighting"}, ` +
+      `mood ${style?.mood ?? "cinematic"}, medium ${style?.medium ?? "digital illustration"}\n` +
+      `Return strict JSON: { score: 0..1, feedback: string, issues: string[] }\n` +
+      `Score below 0.7 if any of the above are visibly wrong.`
+    );
+  }
+
   const styleBlock = style
     ? `Expected style:
 - Palette: ${style.palette}
@@ -110,6 +129,9 @@ export async function executeCritique(
   let artifactId = "stub-artifact-id";
   let style: StyleDescriptor | undefined;
   let panelIntent = "Generate a high-quality cinematic image";
+  let scenePlan:
+    | { subject: string; action: string; cameraAngle: string }
+    | undefined;
 
   if (typeof input === "object" && input !== null) {
     const inp = unwrapPortPayload(input as Record<string, unknown>);
@@ -118,6 +140,23 @@ export async function executeCritique(
     }
     if (typeof inp.style === "object" && inp.style !== null) {
       style = inp.style as StyleDescriptor;
+    }
+    if (
+      typeof inp.scenePlan === "object" &&
+      inp.scenePlan !== null &&
+      "subject" in inp.scenePlan &&
+      typeof (inp.scenePlan as { subject?: unknown }).subject === "string" &&
+      "action" in inp.scenePlan &&
+      typeof (inp.scenePlan as { action?: unknown }).action === "string" &&
+      "cameraAngle" in inp.scenePlan &&
+      typeof (inp.scenePlan as { cameraAngle?: unknown }).cameraAngle ===
+        "string"
+    ) {
+      scenePlan = inp.scenePlan as {
+        subject: string;
+        action: string;
+        cameraAngle: string;
+      };
     }
     if (typeof inp.panelIntent === "string") {
       panelIntent = inp.panelIntent;
@@ -129,7 +168,7 @@ export async function executeCritique(
   void mimeType;
   const imageBase64 = Buffer.from(bytes).toString("base64");
 
-  const rubric = buildRubric(style, panelIntent);
+  const rubric = buildRubric(style, panelIntent, scenePlan);
 
   let critique;
   try {
