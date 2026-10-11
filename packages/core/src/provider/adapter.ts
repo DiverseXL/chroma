@@ -129,6 +129,41 @@ export class ProviderContentFilterError extends ProviderError {
 }
 
 /**
+ * Structural check for rate-limit/unavailable provider errors.
+ *
+ * The app loads @chroma/core through two module graphs (Next's server bundle
+ * for app code, the package's own ESM for @chroma/providers), so class
+ * identity via `instanceof` is unreliable across that boundary in the running
+ * server. Matching on `name`/`code` works in both graphs. Semantics match
+ * ProviderRateLimitError exactly: every rate limit, provider-unavailable
+ * exhaustion, or transient outage surfaces as this class with code
+ * "rate_limit".
+ *
+ * @param error Any caught value.
+ */
+export function isProviderRateLimitError(error: unknown): boolean {
+  if (error instanceof ProviderRateLimitError) return true;
+  if (typeof error !== "object" || error === null) return false;
+  const e = error as { name?: unknown; code?: unknown };
+  return e.name === "ProviderRateLimitError" || e.code === "rate_limit";
+}
+
+/**
+ * Structural check for content-filter provider errors; see
+ * isProviderRateLimitError for why `instanceof` alone is not used.
+ *
+ * @param error Any caught value.
+ */
+export function isProviderContentFilterError(error: unknown): boolean {
+  if (error instanceof ProviderContentFilterError) return true;
+  if (typeof error !== "object" || error === null) return false;
+  const e = error as { name?: unknown; code?: unknown };
+  return (
+    e.name === "ProviderContentFilterError" || e.code === "content_filter"
+  );
+}
+
+/**
  * Common contract that every provider implementation must fulfill.
  */
 export interface ProviderAdapter {

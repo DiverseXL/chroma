@@ -67,6 +67,7 @@ describe("GoogleGeminiAdapter", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     process.env.GEMINI_API_KEY = originalEnv.GEMINI_API_KEY;
     process.env.GOOGLE_MODEL_TEXT = originalEnv.GOOGLE_MODEL_TEXT;
     process.env.GOOGLE_MODEL_VISION = originalEnv.GOOGLE_MODEL_VISION;
@@ -107,10 +108,13 @@ describe("GoogleGeminiAdapter", () => {
     });
 
     expect(result.text).toBe("fallback response");
-    expect(result.metadata).toEqual({ model: "gemini-2.5-flash-lite" });
+    expect(result.metadata).toEqual({
+      model: "gemini-3.5-flash-lite",
+      fallback: true,
+    });
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`,
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
     ]);
   });
 
@@ -128,7 +132,10 @@ describe("GoogleGeminiAdapter", () => {
       prompt: "hello",
     });
 
-    expect(result.metadata).toEqual({ model: "gemini-2.5-flash-lite" });
+    expect(result.metadata).toEqual({
+      model: "gemini-3.5-flash-lite",
+      fallback: true,
+    });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -158,7 +165,10 @@ describe("GoogleGeminiAdapter", () => {
     });
 
     expect(result.score).toBe(0.9);
-    expect(result.metadata).toEqual({ model: "gemini-2.5-flash" });
+    expect(result.metadata).toEqual({
+      model: "gemini-3.5-flash-lite",
+      fallback: true,
+    });
   });
 
   it("does not fall back after HTTP 400", async () => {
@@ -274,30 +284,123 @@ describe("GoogleGeminiAdapter", () => {
     expect((error as Error).message).toContain("429");
   });
 
-  // --- 500 throws ProviderError with body message ---
+  // --- HTTP 503 retry / model-chain behaviour ---
 
-  it("500 throws ProviderError with the message body", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          error: {
-            message: "Internal server error occurred",
-            code: "internal",
-          },
+  it("retries the same model 3 times on HTTP 503, then succeeds on the 4th call", async () => {
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "The model is experiencing high demand" } }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "The model is experiencing high demand" } }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "The model is experiencing high demand" } }), { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSuccessBody("recovered")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
         }),
-        { status: 500 },
+      );
+
+    const adapter = new GoogleGeminiAdapter({ sleep: sleepMock });
+    const result = await adapter.completeText({ prompt: "hello" });
+
+    expect(result.text).toBe("recovered");
+    expect(result.metadata).toEqual({ model: TEXT_MODEL });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(
+      fetchMock.mock.calls.map(([url]) => url),
+    ).toEqual(Array(4).fill(`https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`));
+    expect(sleepMock.mock.calls.map(([ms]) => ms)).toEqual([
+      1000, 2000, 4000,
+    ]);
+    expect(warnSpy).toHaveBeenCalledTimes(3);
+    expect(warnSpy.mock.calls[0][0]).toContain("retrying in 1000ms");
+    warnSpy.mockRestore();
+  });
+
+  it("advances to the next model after 3 failed HTTP 503 retries", async () => {
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "high demand" } }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "high demand" } }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "high demand" } }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "high demand" } }), { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSuccessBody("second model")), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    const adapter = new GoogleGeminiAdapter({ sleep: sleepMock });
+    const result = await adapter.completeText({ prompt: "hello" });
+
+    expect(result.text).toBe("second model");
+    expect(result.metadata).toEqual({
+      model: "gemini-3.5-flash-lite",
+      fallback: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(sleepMock).toHaveBeenCalledTimes(3);
+    vi.restoreAllMocks();
+  });
+
+  it("throws ProviderRateLimitError when every model exhausts its HTTP 503 retries", async () => {
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ error: { message: "high demand" } }),
+          { status: 503 },
+        ),
       ),
     );
 
-    const adapter = new GoogleGeminiAdapter();
+    const adapter = new GoogleGeminiAdapter({ sleep: sleepMock });
+    const error = await captureRejection(
+      adapter.completeText({ prompt: "hello" }),
+      "503-exhausted call",
+    );
+
+    expect(error).toBeInstanceOf(ProviderRateLimitError);
+    expect((error as Error).message).toContain("503");
+    // 3 models x (1 initial + 3 retries) = 12 calls, 9 retries with sleep.
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+    expect(sleepMock).toHaveBeenCalledTimes(9);
+    vi.restoreAllMocks();
+  });
+
+  it("500 exhausts every model, preserving the last error message", async () => {
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Fresh Response per call: a Response body can only be read once.
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              message: "Internal server error occurred",
+              code: "internal",
+            },
+          }),
+          { status: 500 },
+        ),
+      ),
+    );
+
+    const adapter = new GoogleGeminiAdapter({ sleep: sleepMock });
     const error = await captureRejection(
       adapter.completeText({ prompt: "Hello" }),
       "server error call",
     );
 
-    expect(error).toBeInstanceOf(ProviderError);
-    expect(error).not.toBeInstanceOf(ProviderRateLimitError);
-    expect((error as Error).message).toContain("Internal server error occurred");
+    expect(error).toBeInstanceOf(ProviderRateLimitError);
+    expect((error as Error).message).toContain(
+      "Internal server error occurred",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+    vi.restoreAllMocks();
   });
 
   // --- 401 throws ProviderError code unauthorized ---

@@ -3,7 +3,6 @@
  * Assumes `pnpm dev` is running on http://localhost:3000.
  */
 
-import { stat } from "node:fs/promises";
 
 const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3000";
 
@@ -159,15 +158,16 @@ async function main() {
     }
 
     for (const artifact of imageArtifacts.slice(0, 2)) {
-      const file = await stat(artifact.storageKey);
-      if (file.size <= 50000) {
+      const res = await fetch(`${BASE_URL}/api/artifacts/${artifact.id}`);
+      const body = await res.arrayBuffer();
+      if (res.status !== 200 || body.byteLength <= 50000) {
         console.log(
-          `SMOKE FAIL: IMAGE artifact ${artifact.id} is only ${file.size} bytes on disk`,
+          `SMOKE FAIL: IMAGE artifact ${artifact.id} is HTTP ${res.status}, ${body.byteLength} bytes`,
         );
         process.exit(1);
       }
       console.log(
-        `IMAGE artifact ${artifact.id}: ${file.size} bytes on disk`,
+        `IMAGE artifact ${artifact.id}: ${body.byteLength} bytes`,
       );
     }
 

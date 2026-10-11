@@ -90,6 +90,31 @@ function buildUrl(model: string): string {
 }
 
 /**
+ * Delays (ms) before each in-model retry for transient HTTP 5xx responses:
+ * attempt 1 is the initial call, then waits of 1s, 2s, and 4s precede the
+ * three retries before the chain advances to the next model.
+ */
+const RETRY_DELAYS_MS = [1000, 2000, 4000];
+
+/** Total attempts per model: one initial call plus RETRY_DELAYS_MS retries. */
+const MAX_ATTEMPTS_PER_MODEL = 1 + RETRY_DELAYS_MS.length;
+
+/**
+ * Sleep function used between in-model retries. Tests inject a stub via
+ * GoogleAdapterOptions so retry tests run without real delays.
+ */
+export type GoogleSleepFn = (ms: number) => Promise<void>;
+
+const defaultSleep: GoogleSleepFn = (ms) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Optional construction settings for GoogleGeminiAdapter. */
+export interface GoogleAdapterOptions {
+  /** Overrides the sleep used between 5xx retries (tests stub this). */
+  sleep?: GoogleSleepFn;
+}
+
+/**
  * Extracts the human-readable error message from a Google API error response.
  *
  * Confirmed error envelope (probe result):
@@ -144,9 +169,35 @@ function toProviderError(
       { code: "unauthorized" },
     );
   }
+  if (status >= 500) {
+    // Transient server-side failures (500/502/503/...) are retried in-model
+    // by callWithModelFallback before the chain advances.
+    return new ProviderError(
+      `Google API request failed with HTTP ${status}: ${message}`,
+      { code: "server_error" },
+    );
+  }
   return new ProviderError(
     `Google API request failed with HTTP ${status}: ${message}`,
     { code: "provider_error" },
+  );
+}
+
+/**
+ * True for transient HTTP 5xx failures that warrant an in-model retry.
+ */
+function isServerError(error: unknown): boolean {
+  return error instanceof ProviderError && error.code === "server_error";
+}
+
+/**
+ * True for errors that should advance the model chain immediately:
+ * 429 quota exhaustion or a 404 retired model.
+ */
+function isChainAdvanceError(error: unknown): boolean {
+  return (
+    error instanceof ProviderRateLimitError ||
+    (error instanceof ProviderError && error.code === "model_not_found")
   );
 }
 
@@ -196,33 +247,83 @@ async function callGenerateContent(
 }
 
 /**
- * Tries models in preference order, advancing only on quota or retired-model errors.
+ * Tries models in preference order.
+ *
+ * Error handling per attempt:
+ * - HTTP 5xx (server_error): retried against the same model up to three
+ *   times (1s/2s/4s), logging a dev-only warning line, then the chain
+ *   advances to the next model.
+ * - 429 quota / 404 retired model: advance to the next model immediately.
+ * - Anything else (401/400/network/malformed): thrown unchanged, no retry.
+ *
+ * When every model is exhausted the last error is rethrown as a
+ * ProviderRateLimitError so upstream fallbacks (planner's deterministic
+ * storyboard, the critic's heuristic result) can engage instead of failing
+ * the run.
+ *
+ * @param models Model IDs in preference order (deduplicated).
+ * @param apiKey Google AI Studio API key.
+ * @param requestBody The JSON request payload.
+ * @param sleep Injectable sleep used between in-model retries.
  */
 async function callWithModelFallback(
   models: string[],
   apiKey: string,
   requestBody: unknown,
+  sleep: GoogleSleepFn,
 ): Promise<{ body: unknown; model: string }> {
   let lastError: unknown;
+
   for (const model of models) {
-    try {
-      return {
-        body: await callGenerateContent(model, apiKey, requestBody),
-        model,
-      };
-    } catch (error) {
-      lastError = error;
-      if (
-        !(
-          error instanceof ProviderRateLimitError ||
-          (error instanceof ProviderError && error.code === "model_not_found")
-        )
-      ) {
-        throw error;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
+      try {
+        return {
+          body: await callGenerateContent(model, apiKey, requestBody),
+          model,
+        };
+      } catch (error) {
+        lastError = error;
+
+        if (isChainAdvanceError(error)) {
+          break;
+        }
+        if (!isServerError(error)) {
+          throw error;
+        }
+        if (attempt === MAX_ATTEMPTS_PER_MODEL) {
+          break;
+        }
+
+        const delayMs = RETRY_DELAYS_MS[attempt - 1];
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(
+            `[google] ${model} attempt ${attempt}/${MAX_ATTEMPTS_PER_MODEL} failed (${error instanceof Error ? error.message : String(error)}); retrying in ${delayMs}ms`,
+          );
+        }
+        await sleep(delayMs);
       }
     }
   }
-  throw lastError;
+
+  const lastMessage =
+    lastError instanceof Error ? lastError.message : String(lastError);
+  throw new ProviderRateLimitError(
+    `Google API models exhausted without a successful response (last error: ${lastMessage})`,
+  );
+}
+
+/**
+ * Builds result metadata, flagging `fallback` when the served model differs
+ * from the preferred (first) model in the chain.
+ *
+ * @param model Model that produced the response.
+ * @param models The deduplicated preference chain that was used.
+ */
+function buildMetadata(
+  model: string,
+  models: string[],
+): Record<string, unknown> {
+  return model !== models[0] ? { model, fallback: true } : { model };
 }
 
 /**
@@ -285,6 +386,12 @@ function extractResponseText(body: unknown): string {
  * Vision-based scoring calls use GOOGLE_MODEL_VISION.
  */
 export class GoogleGeminiAdapter implements ProviderAdapter {
+  private readonly sleep: GoogleSleepFn;
+
+  constructor(options: GoogleAdapterOptions = {}) {
+    this.sleep = options.sleep ?? defaultSleep;
+  }
+
   /**
    * Generates a text completion via the Gemini generateContent endpoint.
    *
@@ -300,10 +407,15 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
    */
   async completeText(req: CompleteTextRequest): Promise<CompleteTextResult> {
     const { apiKey, textModel } = readConfig(process.env);
+    // Fallback chain, preference order. The whole 2.x family (gemini-2.0-flash,
+    // gemini-2.5-flash, gemini-2.5-flash-lite) returns HTTP 404 "no longer
+    // available to new users" for current API keys (live-confirmed 2026-10-11),
+    // so only live 3.x models are listed here; Google's error text points at
+    // gemini-3.8-flash / gemini-3.5-flash-lite as replacements.
     const models = [...new Set([
       textModel,
-      "gemini-2.5-flash-lite",
-      "gemini-2.0-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.5-flash",
     ])];
 
     const promptText =
@@ -336,11 +448,13 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
       models,
       apiKey,
       requestBody,
+      this.sleep,
     );
     const text = extractResponseText(body);
+    const metadata = buildMetadata(model, models);
 
     if (!req.json) {
-      return { text, metadata: { model } };
+      return { text, metadata };
     }
 
     let parsed: unknown;
@@ -353,7 +467,7 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
       );
     }
 
-    return { text, parsed, metadata: { model } };
+    return { text, parsed, metadata };
   }
 
   /**
@@ -372,10 +486,13 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
    */
   async scoreImage(req: ScoreImageRequest): Promise<CritiqueResult> {
     const { apiKey, visionModel } = readConfig(process.env);
+    // Live 3.x chain only — see the note in completeText: the 2.x family is
+    // 404-retired for current API keys, and both models below were probed
+    // image-capable with responseMimeType=application/json (2026-10-11).
     const models = [...new Set([
       visionModel,
-      "gemini-2.5-flash",
-      "gemini-2.0-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-3.5-flash",
     ])];
 
     if (!req.imageBase64) {
@@ -409,6 +526,7 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
       models,
       apiKey,
       requestBody,
+      this.sleep,
     );
     const text = extractResponseText(body);
 
@@ -443,7 +561,7 @@ export class GoogleGeminiAdapter implements ProviderAdapter {
       score: result.score,
       feedback: typeof result.feedback === "string" ? result.feedback : "",
       issues: Array.isArray(result.issues) ? result.issues : [],
-      metadata: { model },
+      metadata: buildMetadata(model, models),
     };
   }
 

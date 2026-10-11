@@ -12,6 +12,7 @@
     "test": "vitest run",
     "db:migrate": "pnpm --filter @chroma/db db:migrate",
     "db:generate": "pnpm --filter @chroma/db db:generate",
+    "db:keepalive": "node scripts/keepalive.mjs",
     "probe": "node scripts/probe-google.mjs && node scripts/probe-pollinations.mjs"
   },
   "dependencies": {

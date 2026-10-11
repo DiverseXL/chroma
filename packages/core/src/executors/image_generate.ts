@@ -1,4 +1,4 @@
-import { ProviderContentFilterError } from "../provider/adapter.js";
+import { isProviderContentFilterError } from "../provider/adapter.js";
 import type { ExecutionContext } from "./types.js";
 
 /**
@@ -76,7 +76,7 @@ export async function executeImageGenerate(
   try {
     return await attemptGenerate(prompt);
   } catch (err) {
-    if (err instanceof ProviderContentFilterError) {
+    if (isProviderContentFilterError(err)) {
       // Retry once with a safe framing prepended and appended.
       const safePrompt = `${SAFE_PROMPT_PREFIX}${prompt}${SAFE_PROMPT_SUFFIX}`;
       return await attemptGenerate(safePrompt);

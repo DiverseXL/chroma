@@ -10,7 +10,9 @@
 import type { ProviderAdapter } from "@chroma/core";
 import { ProviderError } from "@chroma/core";
 import { CloudflareWorkersAIAdapter } from "./cloudflare.js";
+import { CompositeImageAdapter } from "./composite.js";
 import { GoogleGeminiAdapter } from "./google.js";
+import { KIEAdapter } from "./kie.js";
 
 /**
  * Minimal subset of environment variables required by buildProviders.
@@ -21,13 +23,16 @@ export interface ProviderEnv {
   GEMINI_API_KEY?: string;
   GOOGLE_MODEL_TEXT?: string;
   GOOGLE_MODEL_VISION?: string;
+  KIE_API_KEY?: string;
+  KIE_BASE_URL?: string;
+  KIE_MODEL?: string;
 }
 
 /**
  * The three capability adapters exposed to the Scheduler and executors.
  */
 export interface ProviderSet {
-  /** Handles all image generation (Cloudflare Workers AI). */
+  /** Handles all image generation (Cloudflare Workers AI primary, KIE AI fallback). */
   image: ProviderAdapter;
   /** Handles image scoring / critique (Google Gemini vision). */
   vision: ProviderAdapter;
@@ -54,6 +59,7 @@ export function buildProviders(env: ProviderEnv): ProviderSet {
   if (!env.GEMINI_API_KEY?.trim()) missing.push("GEMINI_API_KEY");
   if (!env.GOOGLE_MODEL_TEXT?.trim()) missing.push("GOOGLE_MODEL_TEXT");
   if (!env.GOOGLE_MODEL_VISION?.trim()) missing.push("GOOGLE_MODEL_VISION");
+  if (!env.KIE_API_KEY?.trim()) missing.push("KIE_API_KEY");
 
   if (missing.length > 0) {
     throw new ProviderError(
@@ -62,8 +68,14 @@ export function buildProviders(env: ProviderEnv): ProviderSet {
     );
   }
 
+  const cloudflare = new CloudflareWorkersAIAdapter();
+  const kie = new KIEAdapter();
+
   return {
-    image: new CloudflareWorkersAIAdapter(),
+    // Cloudflare stays the primary image provider; the composite wrapper only
+    // reaches KIE when the primary throws a ProviderError (network, rate
+    // limit, outage, misconfiguration), keeping KIE spend on real fallbacks.
+    image: new CompositeImageAdapter(cloudflare, kie),
     vision: new GoogleGeminiAdapter(),
     text: new GoogleGeminiAdapter(),
   };

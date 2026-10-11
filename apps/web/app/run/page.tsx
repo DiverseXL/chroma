@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Canvas } from "@/components/app/Canvas";
 import { Inspector } from "@/components/app/Inspector";
 import { Sidebar } from "@/components/app/Sidebar";
+import { DEMO_RUN_ID } from "@/lib/demoRun";
 import { useRunStream } from "@/lib/useRunStream";
 
 type CanvasState = "steady" | "exiting" | "entering";
@@ -14,6 +15,7 @@ export default function RunPage() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [canvasState, setCanvasState] = useState<CanvasState>("steady");
   const [recentRefreshKey, setRecentRefreshKey] = useState(0);
+  const [isDemoRun, setIsDemoRun] = useState(false);
 
   const selectedNode = useMemo(
     () => stream.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -38,6 +40,7 @@ export default function RunPage() {
         "",
         `/run?id=${encodeURIComponent(runId)}`,
       );
+      setIsDemoRun(false);
       setSelectedNodeId(null);
       setCanvasState("steady");
       setRecentRefreshKey((key) => key + 1);
@@ -58,6 +61,7 @@ export default function RunPage() {
           "",
           `/run?id=${encodeURIComponent(runId)}`,
         );
+        setIsDemoRun(runId === DEMO_RUN_ID);
         setCanvasState("entering");
         window.setTimeout(() => setCanvasState("steady"), 420);
       } catch {
@@ -70,6 +74,7 @@ export default function RunPage() {
   useEffect(() => {
     const runId = new URLSearchParams(window.location.search).get("id");
     if (!runId) return;
+    setIsDemoRun(runId === DEMO_RUN_ID);
     void stream.loadRun(runId).catch(() => {
       setCanvasState("steady");
     });
@@ -100,6 +105,7 @@ export default function RunPage() {
         error={stream.error}
         runId={stream.run?.id ?? null}
         refreshKey={recentRefreshKey}
+        demoMode={isDemoRun}
         onRun={startRun}
         onSelectRun={(runId) => void selectRun(runId)}
       />
@@ -111,6 +117,15 @@ export default function RunPage() {
             <span className="run-status-badge" data-status={stream.run.status}>
               {stream.run.status}
             </span>
+            {isDemoRun ? (
+              <span
+                className="run-status-badge"
+                data-status="PENDING"
+                aria-label="Cached demo run"
+              >
+                CACHED DEMO
+              </span>
+            ) : null}
           </div>
         ) : null}
         <Canvas

@@ -11,6 +11,8 @@ interface SidebarProps {
   error: string | null;
   runId: string | null;
   refreshKey: number;
+  /** True while a cached demo run is open: live runs are disabled. */
+  demoMode?: boolean;
   onRun: (brief: string) => Promise<void>;
   onSelectRun: (runId: string) => void;
 }
@@ -43,6 +45,7 @@ export function Sidebar(props: SidebarProps) {
         busy={props.busy}
         connection={props.connection}
         error={props.error}
+        demoMode={props.demoMode}
         onRun={props.onRun}
       />
       <RecentRuns

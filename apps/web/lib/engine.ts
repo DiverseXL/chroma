@@ -29,6 +29,9 @@ export const providers: ProviderSet =
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     GOOGLE_MODEL_TEXT: process.env.GOOGLE_MODEL_TEXT,
     GOOGLE_MODEL_VISION: process.env.GOOGLE_MODEL_VISION,
+    KIE_API_KEY: process.env.KIE_API_KEY,
+    KIE_BASE_URL: process.env.KIE_BASE_URL,
+    KIE_MODEL: process.env.KIE_MODEL,
   });
 
 /**

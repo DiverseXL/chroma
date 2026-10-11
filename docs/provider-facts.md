@@ -705,6 +705,310 @@ No page I read states that image generation is free of charge.
 
 ---
 
+## KIE AI
+
+Verified against live documentation on **2026-10-11**. Every fact carries a
+source URL. Anything not confirmed from a live document is listed under
+[KIE UNCONFIRMED](#kie-unconfirmed) and is not guessed.
+
+### K1. Base URL and authentication
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| API base URL | `https://api.kie.ai` | <https://docs.kie.ai/common-api/quickstart.md> ("API Base URL"); <https://docs.kie.ai/market/quickstart.md>; OpenAPI `servers: - url: https://api.kie.ai` on every model page, e.g. <https://docs.kie.ai/market/google/nanobanana2.md> |
+| Auth header | `Authorization: Bearer <YOUR_API_KEY>` | <https://docs.kie.ai/getting-started.md> §4 "Required Request Headers"; <https://docs.kie.ai/market/quickstart.md> "Authentication" |
+| Content header | `Content-Type: application/json` for JSON bodies (`multipart/form-data` for file-stream upload) | <https://docs.kie.ai/getting-started.md> §4 |
+| Auth failure body | `{"code":401,"msg":"You do not have access permissions"}` when headers are missing or wrong | <https://docs.kie.ai/getting-started.md> §4 |
+| **Critical** | Errors on `/api/v1/*` (and upload endpoints) are returned with **HTTP 200** plus an error `code` in the body. Always check `code`, not just the HTTP status. | <https://docs.kie.ai/getting-started.md> §4; the same rule is restated in the `code` description of every model OpenAPI, e.g. <https://docs.kie.ai/market/common/get-task-detail.md> |
+
+Authentication is Bearer-only: no `x-api-key` (or any other key header) appears
+anywhere in the docs read for this pass.
+
+### K2. Endpoints
+
+Image generation is **asynchronous** - there is no synchronous image endpoint.
+
+| Purpose | Endpoint | Source |
+| --- | --- | --- |
+| Create generation task | `POST https://api.kie.ai/api/v1/jobs/createTask` | <https://docs.kie.ai/market/quickstart.md> "Unified API Structure"; per-model pages, e.g. <https://docs.kie.ai/market/gpt/gpt-image-2-text-to-image.md> |
+| Query task status/result | `GET https://api.kie.ai/api/v1/jobs/recordInfo?taskId={taskId}` | <https://docs.kie.ai/market/quickstart.md>; <https://docs.kie.ai/market/common/get-task-detail.md> |
+| Account credit balance | `GET https://api.kie.ai/api/v1/chat/credit` -> `{"code":200,"msg":"success","data":100.5}` | <https://docs.kie.ai/common-api/get-account-credits.md> |
+| Turn a generated-file URL into a download link | `POST https://api.kie.ai/api/v1/common/download-url`, body `{"url":"..."}`; links valid **20 minutes** | <https://docs.kie.ai/common-api/quickstart.md> |
+| Optional completion webhook | pass `callBackUrl` in the createTask body; KIE POSTs the result (success `code` 200, failure `code` 501) | <https://docs.kie.ai/market/gpt/gpt-image-2-text-to-image.md>; signature guide <https://docs.kie.ai/common-api/webhook-verification.md> (not read in this pass - K9) |
+
+Verbatim, <https://docs.kie.ai/getting-started.md> §7:
+
+> Image, video and music generation tasks are asynchronous: create a task, then
+> query Get Task Details or receive a callback.
+
+> A successful request returns `{"code": 200, "data": {"taskId": "…"}}`.
+
+> A `200 OK` response **only** means the task was successfully **created**. It
+> does **not** mean the task is completed.
+
+### K3. Available image models
+
+**Confirmed `model` IDs** (from an OpenAPI `enum` or explicit doc text):
+
+| Marketing name | API model ID | Source |
+| --- | --- | --- |
+| GPT Image 2 - Text to Image | `gpt-image-2-text-to-image` | <https://docs.kie.ai/market/gpt/gpt-image-2-text-to-image.md> (request enum) |
+| GPT Image 2 - Image to Image | `gpt-image-2-image-to-image` | <https://kie.ai/gpt-image-2> README: "gpt-image-2-text-to-image and gpt-image-2-image-to-image run on POST /api/v1/jobs/createTask" |
+| Google Nano Banana 2 | `nano-banana-2` | <https://docs.kie.ai/market/google/nanobanana2.md> (request enum) |
+| Google Nano Banana 2.1 | `nano-banana-2-1` | <https://docs.kie.ai/market/google/nanobanana-2-1.md> (request enum) |
+| Grok Imagine - Text to Image | `grok-imagine/text-to-image` | <https://docs.kie.ai/market/common/get-task-detail.md> (documented `model` example) |
+
+**Documented image model pages** whose exact `model` IDs were not read (each has
+a live page, source for the list: <https://docs.kie.ai/llms.txt>): Nano Banana
+Pro, Nano Banana, Nano Banana Edit, Nano Banana 2 Lite, GPT Image 2.5 Flare /
+Sunburst (text-to-image and image-to-image), GPT Image-1.5, Seedream 3.0 / 4.0
+/ 4.5 / 5.0 Lite / Pro / Flash (text-to-image plus edit/image-to-image/layer
+decomposition), Flux-2 pro + flex (text-to-image and image-to-image), Qwen /
+Qwen2 / Qwen2.1 / Qwen3 / Qwen3 Pro (text-to-image, image-to-image, edit),
+Ideogram character / character-edit / character-remix / v3 (text-to-image, edit,
+remix), Grok Imagine + Grok Imagine Image 2.0 (text-to-image, image-to-image,
+segment map/edit), Google imagen4 / imagen4-fast / imagen4-ultra, Z-image,
+Recraft remove-background + crisp upscale, Topaz image-upscale, Wan 2.7 image +
+image-pro, 4o Image, Flux Kontext. Some `llms.txt` descriptions embed candidate
+IDs (e.g. `flux-2/pro-text-to-image`, `google/nano-banana`, `qwen/image-edit`)
+but these were not verified against a model-page enum - see K1.
+
+KIE's homepage also advertises these image models with USD pricing: Nano
+Banana Pro, Nano Banana 2, GPT Image 2, GPT Image 2.5, Seedream 5 Pro,
+Seedream 4.5, Nano Banana (<https://kie.ai>).
+
+### K4. Text-to-image request shape (`createTask`)
+
+Required envelope: body must contain `model` (required) and `input` (required);
+`callBackUrl` (optional, URI). Source for the envelope and field requirements:
+<https://docs.kie.ai/market/google/nanobanana2.md>,
+<https://docs.kie.ai/market/gpt/gpt-image-2-text-to-image.md>,
+<https://docs.kie.ai/market/google/nanobanana-2-1.md>.
+
+Documented example, verbatim from <https://docs.kie.ai/market/google/nanobanana2.md>:
+
+```json
+{
+  "model": "nano-banana-2",
+  "callBackUrl": "https://your-domain.com/api/callback",
+  "input": {
+    "prompt": "Comic poster: cool banana hero in shades leaps from sci-fi pad. ...",
+    "image_input": [],
+    "aspect_ratio": "auto",
+    "resolution": "1K",
+    "output_format": "png"
+  }
+}
+```
+
+#### `gpt-image-2-text-to-image` - `input` fields
+
+Source: <https://docs.kie.ai/market/gpt/gpt-image-2-text-to-image.md>
+
+| Field | Required | Type / enum | Notes (verbatim where quoted) |
+| --- | --- | --- | --- |
+| `prompt` | **yes** | string, 1-20000 chars | "Text prompt. Required, maximum 20,000 characters." |
+| `aspect_ratio` | no | `auto`, `1:1`, `3:2`, `2:3`, `4:3`, `3:4`, `5:4`, `4:5`, `16:9`, `9:16`, `2:1`, `1:2`, `3:1`, `1:3`, `21:9`, `9:21` | "auto by default"; 2K unsupported: 5:4, 4:5, 3:1, 1:3, 9:21; 4K unsupported: 3:1, 1:3, 9:21 |
+| `resolution` | no | `1K`, `2K`, `4K` | "Set this field explicitly." `background` only available at 1K |
+| `background` | no | `transparent`, `opaque`, `auto` | "only supported when the resolution is 1K" |
+
+#### `nano-banana-2` / `nano-banana-2-1` - `input` fields
+
+Source: <https://docs.kie.ai/market/google/nanobanana2.md>,
+<https://docs.kie.ai/market/google/nanobanana-2-1.md>
+
+| Field | Required | Type / enum | Notes |
+| --- | --- | --- | --- |
+| `prompt` | **yes** | string, max 20000 chars | |
+| `image_input` | no | array of URL strings | "File URL after upload, not file content"; `image/jpeg`, `image/png`, `image/webp`; max 30.0MB each. `nano-banana-2`: `maxItems: 14`. `nano-banana-2-1`: `maxItems: 10` |
+| `aspect_ratio` | no | `1:1`, `2:3`, `3:2`, `1:4`, `4:1`, `3:4`, `4:3`, `4:5`, `5:4`, `1:8`, `8:1`, `9:16`, `16:9`, `21:9`, `auto` | default `auto` |
+| `resolution` | no | `1K`, `2K`, `4K` | default `1K` |
+| `output_format` | no | `png`, `jpg` | default `jpg` |
+
+**Conflicting sources (within KIE):** the `nano-banana-2` docs schema says
+`maxItems: 14` / "supports up to 14 images" (<https://docs.kie.ai/market/google/nanobanana2.md>)
+while the live playground form on <https://kie.ai/nano-banana-2> says
+"Maximum files: 10" and "supports up to 10 images". See K2 in the KIE
+UNCONFIRMED table.
+
+### K5. Response shape - where the image lives
+
+**Create step** (HTTP 200, verbatim example from
+<https://docs.kie.ai/market/gpt/gpt-image-2-text-to-image.md>):
+
+```json
+{"code": 200, "msg": "success", "data": {"taskId": "task_gptimage_1765180586443"}}
+```
+
+**Poll step** - `GET /api/v1/jobs/recordInfo?taskId=...` returns `data` with
+these fields (source: <https://docs.kie.ai/market/common/get-task-detail.md>):
+
+| Field | Meaning |
+| --- | --- |
+| `taskId`, `model` | task id and the model used |
+| `state` | enum `waiting`, `queuing`, `generating`, `success`, `fail` |
+| `param` | JSON string of the original request; "Its `input` is itself a JSON string - parse it twice." |
+| `resultJson` | **JSON string** with the result; present when `state` is `success`, else may be null/empty |
+| `response` | "Parsed form of resultJson. Present only when state is success." |
+| `failCode`, `failMsg` | numeric-string failure code and reason; present when `state` is `fail` |
+| `costTime` | processing time in seconds |
+| `createTime`, `completeTime` | Unix ms timestamps |
+| `creditsConsumed` | number - actual credits deducted ("0 for failed tasks") |
+
+**Image location:** for images, `resultJson` parses to
+`{"resultUrls": ["https://..."]}` - verbatim from
+<https://docs.kie.ai/market/common/get-task-detail.md>:
+
+> For images/media/videos: {resultUrls: []}
+
+and from the model callback examples, e.g.
+<https://docs.kie.ai/market/google/nanobanana-2-1.md>:
+
+```json
+{"resultUrls":["https://tempfile.aiquickdraw.com/workers/images/image_90b6bf4499a80b74a2b5ee640b7aaf70.jpg"]}
+```
+
+So the image URL is at **`data.resultJson` (string) -> parse -> `resultUrls[0]`**.
+No base64 image bytes are returned by the image API. Generated media files are
+kept for **14 days** (<https://docs.kie.ai/getting-started.md> §6). Whether
+`resultUrls` can be fetched directly or must first pass through
+`/api/v1/common/download-url` is not stated - see K3.
+
+Polling errors also arrive as `{code, msg, data}`; `422` means "taskId is
+missing, or the task does not exist or does not belong to your account"
+(<https://docs.kie.ai/market/common/get-task-detail.md>).
+
+### K6. Image editing / reference-image inputs - supported
+
+1. **Reference/edit inputs on the generation model itself:** `input.image_input`
+   (URL array) on `nano-banana-2` (up to 14 per docs) and `nano-banana-2-1`
+   (up to 10). Sources: <https://docs.kie.ai/market/google/nanobanana2.md>,
+   <https://docs.kie.ai/market/google/nanobanana-2-1.md>.
+2. **Dedicated edit model IDs** documented as separate pages: GPT Image 2
+   image-to-image ("image-to-image accepts up to 16 input images",
+   <https://kie.ai/gpt-image-2>), plus Google - Nano Banana Edit
+   (<https://docs.kie.ai/market/google/nano-banana-edit.md>), Seedream 4.0/4.5/
+   5.0 Lite/Pro/Flash edit pages, Qwen image-edit, Ideogram V3 edit, Flux-2
+   image-to-image, Grok Imagine image-to-image (page URLs from
+   <https://docs.kie.ai/llms.txt>; their request schemas were not read - K1).
+3. **Files that are not hosted yet** must be uploaded first via the File Upload
+   API (base64, file stream, or remote URL): "Files that are not hosted yet can
+   be uploaded first with the Kie.ai File Upload API"
+   (<https://kie.ai/nano-banana-2>); endpoints listed at
+   <https://docs.kie.ai/file-upload-api/quickstart.md>.
+
+### K7. Credits - what one image costs
+
+**Ratio: 1 credit = $0.005 USD ($1 = 200 credits).** Two independent confirmations:
+
+- <https://kie.ai/gpt-image-2> price card, verbatim: "now just **6 credits
+  ($0.03)** for 1 K, **10 credits ($0.05)** for 2 K, and **16 credits ($0.08)**
+  for 4 K."
+- <https://kie.ai/nano-banana-2> price card, verbatim: "**8 credits ($0.04)**
+  for 1 K, **12 credits ($0.06)** for 2 K, and **18 credits ($0.09)** for 4 K".
+- Cross-check on <https://kie.ai/pricing>, whose table prints a "Credits / Gen"
+  column next to "Our Price (USD)": claude-haiku-5-5 input `12` credits per
+  million tokens = `$0.06`; kling 3.0 omni `67` credits per second = `$0.335`
+  (both 1 credit = $0.005).
+
+| Model | 1K | 2K | 4K | Source |
+| --- | --- | --- | --- | --- |
+| `gpt-image-2-text-to-image` | 6 credits ($0.03) | 10 ($0.05) | 16 ($0.08) | <https://kie.ai/gpt-image-2> |
+| `nano-banana-2` | 8 credits ($0.04) | 12 ($0.06) | 18 ($0.09) | <https://kie.ai/nano-banana-2> |
+
+Other confirmed billing facts:
+
+- New users get **80 free credits** (<https://kie.ai> FAQ "Where can I test
+  models before development?"; also <https://kie.ai/gpt-image-2> and
+  <https://kie.ai/nano-banana-2>: "New Kie.ai users receive 80 free credits for
+  testing.").
+- **Failed tasks are not charged**: "Failed tasks are not charged."
+  (<https://kie.ai> FAQ "Will I be charged if a task fails?"); callback schema:
+  "Credits consumed by the task; **0 for failed tasks**"
+  (<https://docs.kie.ai/market/gpt/gpt-image-2-text-to-image.md>).
+- The actual charge per task is reported as `data.creditsConsumed` (number)
+  (<https://docs.kie.ai/market/common/get-task-detail.md>).
+- Chat/vision requests also bill credits: the Gemini chat response carries
+  `credits_consumed` with example `0.01`
+  (<https://docs.kie.ai/market/gemini/gemini-3-8-flash.md>).
+- Credits do not expire (<https://kie.ai> FAQ "Do KIE credits expire?").
+- Balance endpoint: `GET /api/v1/chat/credit` -> `{"code":200,"msg":"success",
+  "data":100.5}` (<https://docs.kie.ai/common-api/get-account-credits.md>).
+- **Stale example warning:** the `nano-banana-2` doc's callback example shows
+  `creditsConsumed: 8` for a **2K** request
+  (<https://docs.kie.ai/market/google/nanobanana2.md>), but the current price
+  card says 2K = 12 credits. The price card is treated as current; doc examples
+  are illustrative.
+- USD prices for other image models (credits derived as USD / 0.005, not printed
+  by KIE): GPT Image 2.5 1K $0.03 / 2K $0.05; Nano Banana Pro 1K/2K $0.09,
+  4K $0.12; Seedream 5.0 Pro $0.035 per image (<https://kie.ai>). See K8.
+
+### K8. Rate limits and retry semantics
+
+| Fact | Value | Source |
+| --- | --- | --- |
+| New-request rate limit | **20 new generation requests per 10 seconds** (FAQ: "equals up to 120 new requests per minute"), applied **per account** | <https://docs.kie.ai/getting-started.md> §8; <https://kie.ai> FAQ "What are the rate limits?" |
+| Concurrency | "This typically allows 100+ concurrent running tasks"; no strict limit on running tasks | <https://docs.kie.ai/getting-started.md> §8; <https://kie.ai> FAQ |
+| On exceeding | request returns **`code` 429**; "Rejected requests will not enter the queue" (i.e. the task never started - safe to retry later) | <https://docs.kie.ai/getting-started.md> §8 |
+| Raising the limit | contact support; "approvals are handled cautiously" | <https://docs.kie.ai/getting-started.md> §8; <https://kie.ai> FAQ |
+| Polling guidance | "Implement exponential backoff: Start with 2-3 second intervals, increase gradually"; "Keep polling until state is success or fail" | <https://docs.kie.ai/market/common/get-task-detail.md> (Best Practices) |
+| Callbacks | "Use callbacks for production" to avoid polling | <https://docs.kie.ai/market/common/get-task-detail.md> |
+| Retry safety | failed generations cost 0 credits, so re-submitting a failed task does not double-charge | <https://kie.ai> FAQ; callback schema (K7) |
+| Retention | generated media **14 days**, logs 2 months; "download and back up ... in advance" | <https://docs.kie.ai/getting-started.md> §6; <https://kie.ai> FAQ |
+| Download links | valid **20 minutes** only | <https://docs.kie.ai/common-api/quickstart.md> |
+
+Body `code` values, from <https://docs.kie.ai/market/common/get-task-detail.md>:
+
+- Enum: `200`, `401`, `402`, `404`, `422`, `429`, `433`, `455`, `500`, `501`, `505`
+- Described meanings: `200` success; `401` invalid/missing API key; `402`
+  insufficient credits; `404` not found; `408` "Timeout - No result has been
+  returned for over 10 minutes"; `422` validation error; `429` rate limited;
+  `455` maintenance; `500` server error; `501` "Generation Failed"; `505`
+  feature disabled.
+- `433` appears in the enum with **no description** (K5); `408` is described but
+  is not in the enum. Both recorded as-is.
+
+**HTTP-status caveat:** <https://docs.kie.ai/getting-started.md> §4 says errors
+on `/api/v1/*` come back as **HTTP 200** with an error `code` in the body, while
+the OpenAPI pages document `401`/`422`/`429`/`500` as HTTP responses. Which
+behaviour a caller actually sees per failure mode is unobserved - see K4.
+
+### K9. Vision / critic model - yes (via the chat API)
+
+| Item | Value | Source |
+| --- | --- | --- |
+| Model | `gemini-3-8-flash` | <https://docs.kie.ai/market/gemini/gemini-3-8-flash.md> |
+| Endpoint | `POST https://api.kie.ai/gemini/v1/models/gemini-3-8-flash:streamGenerateContent` (path from the page; host from its OpenAPI `servers: https://api.kie.ai`) | same |
+| Auth | same `Authorization: Bearer` header | same |
+| **Image input** | `contents[].parts[]` accepts `inline_data` with `mime_type` + base64 `data`, and `file_data` with `file_uri`/`mime_type` | same |
+| Text output | `candidates[].content.parts[].text` (also `functionCall`, `thoughtSignature`) | same |
+| Request extras | `tools` (`googleSearch`, `functionDeclarations`), `generationConfig.thinkingConfig` | same |
+| Streaming | body field `stream`, **default `true`**; "The last data chunk carries usageMetadata and credits_consumed, followed by data: [DONE]" | same |
+| Credits | response includes `credits_consumed` (example `0.01`) | same |
+| Error handling | "Errors are returned with HTTP 200 and a JSON body {"code": <int>, "msg": "<reason>"}" | same |
+| Caveat | page warns: "**Chat only** - This model currently supports chat requests only and has not yet been adapted for agent use." | same |
+
+Other chat models (Claude / GPT / Grok families) are documented under
+<https://docs.kie.ai/llms.txt>, but their image-input support was not read - see
+K6.
+
+### KIE UNCONFIRMED
+
+| ID | Fact | What is missing / how to settle it |
+| --- | --- | --- |
+| K1 | API `model` IDs for every image model except `gpt-image-2-text-to-image`, `gpt-image-2-image-to-image`, `nano-banana-2`, `nano-banana-2-1`, `grok-imagine/text-to-image` | The model pages exist (K3) but their request `model` enums were not read. Fetch each page's OpenAPI enum. |
+| K2 | Max reference images for `nano-banana-2`: **14** (docs schema `maxItems: 14`) vs **10** (live playground "Maximum files: 10") | Two KIE sources disagree. Settle by sending 11+ reference images or asking support. |
+| K3 | Whether `resultUrls` are directly fetchable or must go through `POST /api/v1/common/download-url` first | Not stated anywhere read. The probe tries a direct GET first and reports the outcome. |
+| K4 | Whether `createTask`/`recordInfo` failures really arrive as HTTP 200 + body `code`, or as real HTTP status codes | getting-started §4 and the OpenAPI response codes contradict each other. Observe with the probe (bad key, bad taskId). |
+| K5 | Meaning of body code `433` | Present in every model page's enum, never described. |
+| K6 | Image-input support for non-Gemini chat models (Claude/GPT/Grok) as critics | Only the Gemini 3.8 Flash chat page was read. |
+| K7 | Behaviour of `stream: false` on the Gemini chat endpoint | The page documents `stream` (default true) and shows a non-stream response schema, but gives no `stream: false` example. |
+| K8 | Credit cost for image models other than `gpt-image-2` / `nano-banana-2` | Only those two price cards were read; the credits column on <https://kie.ai/pricing> was not fetched per image model. |
+| K9 | Webhook (callback) signature/verification details | Guide exists at <https://docs.kie.ai/common-api/webhook-verification.md> but was not read in this pass. |
+| K10 | Probe outcome: real `taskId` flow, real `resultJson`, real credit charge | `scripts/probe-kie.mjs` has not been run yet. |
+
+---
+
 ## Conflicting sources
 
 ### C1. Pollinations: which API surface is current?

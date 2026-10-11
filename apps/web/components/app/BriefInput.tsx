@@ -2,12 +2,15 @@
 
 import { useState, type FormEvent, type PointerEvent } from "react";
 import { ConnectionDot } from "./ConnectionDot";
+import { DEMO_RUN_HINT } from "@/lib/demoRun";
 import type { ConnectionStatus } from "@/lib/runTypes";
 
 interface BriefInputProps {
   busy: boolean;
   connection: ConnectionStatus;
   error: string | null;
+  /** True while a cached demo run is open: the Run button is disabled. */
+  demoMode?: boolean;
   onRun: (brief: string) => Promise<void>;
 }
 
@@ -23,6 +26,7 @@ export function BriefInput({
   busy,
   connection,
   error,
+  demoMode,
   onRun,
 }: BriefInputProps) {
   const [brief, setBrief] = useState("");
@@ -30,7 +34,7 @@ export function BriefInput({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting || busy || !brief.trim()) return;
+    if (submitting || busy || demoMode || !brief.trim()) return;
     setSubmitting(true);
     try {
       await onRun(brief.trim());
@@ -57,7 +61,8 @@ export function BriefInput({
       <button
         className="run-button"
         type="submit"
-        disabled={busy || submitting || !brief.trim()}
+        disabled={busy || submitting || demoMode || !brief.trim()}
+        title={demoMode ? DEMO_RUN_HINT : undefined}
         onPointerDown={pressed}
         onPointerUp={released}
         onPointerLeave={released}
@@ -65,6 +70,11 @@ export function BriefInput({
       >
         {submitting ? "Starting…" : busy ? "Run in progress" : "Run"}
       </button>
+      {demoMode ? (
+        <p className="run-demo-hint" role="status">
+          {DEMO_RUN_HINT}
+        </p>
+      ) : null}
       <div className="run-connection-row">
         <ConnectionDot status={connection} />
       </div>

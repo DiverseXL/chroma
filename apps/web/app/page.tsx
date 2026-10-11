@@ -1,4 +1,5 @@
 import { DemoPreview } from "@/components/landing/DemoPreview";
+import { DemoRun } from "@/components/landing/DemoRun";
 import { FAQ } from "@/components/landing/FAQ";
 import { FeatureGrid } from "@/components/landing/FeatureGrid";
 import { FooterCTA } from "@/components/landing/FooterCTA";
@@ -14,6 +15,7 @@ export default function HomePage() {
       <Header />
       <main>
         <Hero />
+        <DemoRun />
         <Ticker />
         <DemoPreview />
         <FeatureGrid />

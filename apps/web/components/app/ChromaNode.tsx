@@ -56,9 +56,45 @@ function getScore(value: unknown): number | null {
   return typeof score === "number" && Number.isFinite(score) ? score : null;
 }
 
+interface NodeBadge {
+  text: string;
+  kind: "model" | "fallback" | "heuristic";
+}
+
+/**
+ * Derives the small status badge shown in the node meta row:
+ * - PLAN: the model that served the storyboard, or "fallback" when the
+ *   model chain (or the planner itself) degraded.
+ * - CRITIQUE: "heuristic" when the critic substituted a heuristic score
+ *   because the vision provider was unavailable.
+ */
+function getNodeBadge(
+  kind: NodeKind,
+  outputJson: unknown,
+): NodeBadge | null {
+  if (typeof outputJson !== "object" || outputJson === null) {
+    return null;
+  }
+  const meta = (outputJson as { metadata?: unknown }).metadata;
+  if (typeof meta !== "object" || meta === null) {
+    return null;
+  }
+  const record = meta as Record<string, unknown>;
+  if (record.fallback === true) {
+    return kind === "CRITIQUE"
+      ? { text: "heuristic", kind: "heuristic" }
+      : { text: "fallback", kind: "fallback" };
+  }
+  if (kind === "PLAN" && typeof record.model === "string" && record.model) {
+    return { text: record.model, kind: "model" };
+  }
+  return null;
+}
+
 export function ChromaNode({ data }: NodeProps<ChromaFlowNode>) {
   const { node, artifact, selected, flash } = data;
   const score = getScore(node.outputJson);
+  const badge = getNodeBadge(node.kind, node.outputJson);
   const isComposeImage = node.kind === "COMPOSE" && artifact?.kind === "IMAGE";
 
   return (
@@ -87,6 +123,11 @@ export function ChromaNode({ data }: NodeProps<ChromaFlowNode>) {
         <span>{node.kind.replaceAll("_", " ")}</span>
         {node.attempts > 1 ? (
           <span>· attempt {node.attempts}/{node.maxAttempts}</span>
+        ) : null}
+        {badge ? (
+          <span className="chroma-node__badge" data-kind={badge.kind}>
+            {badge.text}
+          </span>
         ) : null}
       </div>
       {typeof node.progressPercent === "number" ? (

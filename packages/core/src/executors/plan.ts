@@ -1,7 +1,7 @@
 import { compileGraph } from "../graph/compiler.js";
 import {
   ProviderError,
-  ProviderRateLimitError,
+  isProviderRateLimitError,
 } from "../provider/adapter.js";
 import type { GraphSpec } from "../types/index.js";
 import type { ExecutionContext } from "./types.js";
@@ -136,8 +136,8 @@ function buildFallbackStoryboard(): GraphSpec {
 
 function isPlannerRateLimit(error: unknown): boolean {
   return (
-    error instanceof ProviderRateLimitError ||
-    (error instanceof Error && /Google API.*HTTP 429/.test(error.message))
+    isProviderRateLimitError(error) ||
+    (error instanceof Error && /Google API.*HTTP (429|503)/.test(error.message))
   );
 }
 
@@ -213,6 +213,15 @@ export async function executePlan(
 
     try {
       const spec = result.parsed as GraphSpec;
+      // Surface which text model actually served this plan (and whether the
+      // chain fell back) so the UI can badge the PLAN node.
+      if (
+        result.metadata != null &&
+        typeof spec === "object" &&
+        spec !== null
+      ) {
+        spec.metadata = { ...(spec.metadata ?? {}), ...result.metadata };
+      }
       compileGraph(spec);
       return spec;
     } catch (err) {

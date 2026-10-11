@@ -5,5 +5,7 @@
  */
 
 export * from "./cloudflare.js";
+export * from "./composite.js";
 export * from "./google.js";
+export * from "./kie.js";
 export * from "./registry.js";
