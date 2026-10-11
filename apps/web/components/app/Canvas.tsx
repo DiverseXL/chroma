@@ -22,6 +22,7 @@ import type {
   RunArtifact,
   RunEdge,
   RunNode,
+  RunStatus,
 } from "@/lib/runTypes";
 import { ChromaNode } from "./ChromaNode";
 
@@ -31,6 +32,8 @@ interface CanvasProps {
   nodes: RunNode[];
   edges: RunEdge[];
   artifacts: RunArtifact[];
+  runId: string | null;
+  runStatus: RunStatus | null;
   selectedNodeId: string | null;
   flashSucceeded: boolean;
   state: "steady" | "exiting" | "entering";
@@ -54,6 +57,8 @@ function CanvasFlow({
   nodes: runNodes,
   edges: runEdges,
   artifacts,
+  runId,
+  runStatus,
   selectedNodeId,
   flashSucceeded,
   state,
@@ -72,6 +77,28 @@ function CanvasFlow({
         artifacts
           .filter((item) => item.nodeId === node.id && item.kind === "IMAGE")
           .at(-1) ?? null;
+      const upstreamIds = new Set<string>([node.id]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const edge of runEdges) {
+          if (
+            upstreamIds.has(edge.toNodeId) &&
+            !upstreamIds.has(edge.fromNodeId)
+          ) {
+            upstreamIds.add(edge.fromNodeId);
+            changed = true;
+          }
+        }
+      }
+      const hasUpstreamImageArtifact =
+        node.kind === "COMPOSE" &&
+        artifacts.some(
+          (item) =>
+            item.kind === "IMAGE" &&
+            item.nodeId !== node.id &&
+            upstreamIds.has(item.nodeId),
+        );
       return {
         id: node.id,
         type: "chroma",
@@ -79,12 +106,15 @@ function CanvasFlow({
         data: {
           node,
           artifact,
+          runId,
+          runStatus,
+          hasUpstreamImageArtifact,
           selected: selectedNodeId === node.id,
           flash: flashSucceeded && node.status === "SUCCEEDED",
         },
       };
     });
-  }, [artifacts, flashSucceeded, runNodes, selectedNodeId]);
+  }, [artifacts, flashSucceeded, runEdges, runId, runNodes, runStatus, selectedNodeId]);
 
   const nextEdges = useMemo<ChromaFlowEdge[]>(() => {
     const statusById = new Map(runNodes.map((node) => [node.id, node.status]));

@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import Image from "next/image";
-import type { RunArtifact, RunNode } from "@/lib/runTypes";
+import type { RunArtifact, RunNode, RunStatus } from "@/lib/runTypes";
 
 type InspectorTab = "input" | "output" | "artifact";
 
 interface InspectorProps {
   node: RunNode | null;
   artifact: RunArtifact | null;
+  runId: string | null;
+  runStatus: RunStatus | null;
   onClose: () => void;
 }
 
@@ -34,10 +36,20 @@ function release(event: PointerEvent<HTMLButtonElement>) {
   delete event.currentTarget.dataset.pressed;
 }
 
-export function Inspector({ node, artifact, onClose }: InspectorProps) {
+export function Inspector({
+  node,
+  artifact,
+  runId,
+  runStatus,
+  onClose,
+}: InspectorProps) {
   const panelRef = useRef<HTMLElement>(null);
   const [tab, setTab] = useState<InspectorTab>("input");
   const open = node !== null;
+  const canDownload =
+    node?.kind === "COMPOSE" &&
+    runId !== null &&
+    (runStatus === "SUCCEEDED" || runStatus === "DEGRADED");
 
   useEffect(() => {
     const panel = panelRef.current;
@@ -85,6 +97,15 @@ export function Inspector({ node, artifact, onClose }: InspectorProps) {
               {formatTime(node.startedAt)} → {formatTime(node.endedAt)}
             </span>
           </div>
+          {canDownload ? (
+            <a
+              className="button button-primary inspector-download"
+              href={`/api/runs/${encodeURIComponent(runId)}/download`}
+              download
+            >
+              Download panel set (.zip)
+            </a>
+          ) : null}
           <div className="inspector-tabs" role="tablist" aria-label="Node details">
             {(["input", "output", "artifact"] as const).map((name) => (
               <button

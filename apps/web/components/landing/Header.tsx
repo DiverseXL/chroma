@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
+import { DEMO_RUN_ID } from "@/lib/demoRun";
 import { BrandMark } from "./BrandMark";
 
 export function Header() {
@@ -52,6 +54,16 @@ export function Header() {
             <path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 6v-3.9a3.4 3.4 0 0 0-.9-2.7c3-.3 6.2-1.5 6.2-6.7a5.2 5.2 0 0 0-1.4-3.6 4.8 4.8 0 0 0-.1-3.6S17.6 1.2 15 3a13.3 13.3 0 0 0-7 0C5.4 1.2 4.2 1.5 4.2 1.5a4.8 4.8 0 0 0-.1 3.6 5.2 5.2 0 0 0-1.4 3.6c0 5.2 3.2 6.4 6.2 6.7a3.4 3.4 0 0 0-.9 2.7V22" />
           </svg>
         </a>
+        <Link
+          className="button button-secondary header-demo"
+          href={`/run?id=${encodeURIComponent(DEMO_RUN_ID)}`}
+          aria-label="Watch a demo run"
+        >
+          <span className="header-demo-label">Watch a demo run</span>
+          <span className="header-demo-label-short" aria-hidden="true">
+            Watch demo
+          </span>
+        </Link>
         <a className="button button-primary header-launch" href="/run">
           Launch app
         </a>

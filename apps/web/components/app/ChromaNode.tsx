@@ -92,10 +92,23 @@ function getNodeBadge(
 }
 
 export function ChromaNode({ data }: NodeProps<ChromaFlowNode>) {
-  const { node, artifact, selected, flash } = data;
+  const {
+    node,
+    artifact,
+    runId,
+    runStatus,
+    hasUpstreamImageArtifact,
+    selected,
+    flash,
+  } = data;
   const score = getScore(node.outputJson);
   const badge = getNodeBadge(node.kind, node.outputJson);
   const isComposeImage = node.kind === "COMPOSE" && artifact?.kind === "IMAGE";
+  const canDownload =
+    node.kind === "COMPOSE" &&
+    hasUpstreamImageArtifact &&
+    runId !== null &&
+    (runStatus === "SUCCEEDED" || runStatus === "DEGRADED");
 
   return (
     <div
@@ -117,6 +130,30 @@ export function ChromaNode({ data }: NodeProps<ChromaFlowNode>) {
           >
             {score.toFixed(2)}
           </span>
+        ) : null}
+        {canDownload ? (
+          <a
+            className="chroma-node__download"
+            href={`/api/runs/${encodeURIComponent(runId)}/download`}
+            download
+            aria-label="Download panel set"
+            title="Download panel set"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 3v11m0 0 4-4m-4 4-4-4M4 17v3h16v-3" />
+            </svg>
+          </a>
         ) : null}
       </div>
       <div className="chroma-node__meta">

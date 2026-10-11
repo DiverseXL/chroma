@@ -100,6 +100,9 @@ export interface RunEvent {
 export interface ChromaNodeData extends Record<string, unknown> {
   node: RunNode;
   artifact: RunArtifact | null;
+  runId: string | null;
+  runStatus: RunStatus | null;
+  hasUpstreamImageArtifact: boolean;
   selected: boolean;
   flash: boolean;
 }

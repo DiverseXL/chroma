@@ -132,6 +132,8 @@ export default function RunPage() {
           nodes={stream.nodes}
           edges={stream.edges}
           artifacts={stream.artifacts}
+          runId={stream.run?.id ?? null}
+          runStatus={stream.run?.status ?? null}
           selectedNodeId={selectedNodeId}
           flashSucceeded={stream.flashSucceeded}
           state={canvasState}
@@ -141,6 +143,8 @@ export default function RunPage() {
         <Inspector
           node={selectedNode}
           artifact={selectedArtifact}
+          runId={stream.run?.id ?? null}
+          runStatus={stream.run?.status ?? null}
           onClose={() => setSelectedNodeId(null)}
         />
       </section>

@@ -55,9 +55,11 @@ original `Content-Type`.
 | `pnpm probe` | Run both provider probes (writes to `docs/probe/`) |
 | `pnpm db:keepalive` | Ping the DB every 4 min to prevent cold starts |
 
-`pnpm db:keepalive` is meant for a **background terminal during demo prep**
-only — it keeps the serverless database instance warm so the first request
-after idle connects immediately. It is not a production daemon; stop it with
+To keep the database warm automatically, add a `DATABASE_URL` repository
+secret in GitHub Actions. The `Keep database awake` workflow pings every five
+minutes and can also be started manually. Scheduled GitHub Actions may be
+delayed, so this does not guarantee the database is always awake. For a local
+session, run `pnpm db:keepalive` in a background terminal and stop it with
 Ctrl+C when you are done.
 
 ## Provider facts

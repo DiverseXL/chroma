@@ -316,6 +316,16 @@ a {
   font-size: 14px;
 }
 
+.header-demo {
+  min-height: 36px;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+
+.header-demo-label-short {
+  display: none;
+}
+
 .hero {
   position: relative;
   display: grid;
@@ -941,6 +951,19 @@ a {
 
   .header-nav-right {
     grid-column: 2;
+    gap: 8px;
+  }
+
+  .header-demo {
+    padding-inline: 10px;
+  }
+
+  .header-demo-label {
+    display: none;
+  }
+
+  .header-demo-label-short {
+    display: inline;
   }
 
   .hero {
@@ -1014,39 +1037,9 @@ a {
     font-size: var(--text-base);
   }
 
-/* Landing section linking to the cached demo run. */
-.demo-run {
-  padding: var(--space-16) 0;
-  border-top: 1px solid var(--border);
-  text-align: center;
-}
-
-.demo-run-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.demo-run-title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: clamp(1.4rem, 3vw, 2rem);
-  font-weight: 600;
-  letter-spacing: -0.03em;
-}
-
-.demo-run-lead {
-  margin: 0;
-  max-width: 42rem;
-  color: var(--text-secondary);
-  font-size: var(--text-lg);
-  line-height: 1.6;
-}
-
 .footer-cta {
-    padding-top: var(--space-24);
-  }
+  padding-top: var(--space-24);
+}
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1631,6 +1624,31 @@ a {
   min-height: 20px;
 }
 
+.chroma-node__download {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  transition: transform 120ms var(--ease-out);
+}
+
+.chroma-node__download:active {
+  transform: scale(0.94);
+}
+
+@media (hover: hover) {
+  .chroma-node__download:hover {
+    border-color: var(--border-hover);
+    background: var(--bg-elevated);
+  }
+}
+
 .chroma-node__icon {
   display: inline-flex;
   flex: 0 0 20px;
@@ -1809,6 +1827,16 @@ a {
   align-items: center;
   gap: 10px;
   margin-bottom: 20px;
+}
+
+.inspector-download {
+  width: 100%;
+  margin-bottom: 20px;
+  transition: transform var(--duration-press) var(--ease-out);
+}
+
+.inspector-download:active {
+  transform: scale(0.97);
 }
 
 .inspector-timing {
