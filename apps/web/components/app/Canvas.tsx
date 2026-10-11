@@ -25,6 +25,7 @@ import type {
   RunStatus,
 } from "@/lib/runTypes";
 import { ChromaNode } from "./ChromaNode";
+import { RunStarting } from "./RunStarting";
 
 const nodeTypes = { chroma: ChromaNode };
 
@@ -38,6 +39,8 @@ interface CanvasProps {
   flashSucceeded: boolean;
   state: "steady" | "exiting" | "entering";
   connection: ConnectionStatus;
+  /** True from Run click until graph nodes spawn (covers DB cold start). */
+  preparing: boolean;
   onNodeSelect: (nodeId: string) => void;
 }
 
@@ -63,6 +66,7 @@ function CanvasFlow({
   flashSucceeded,
   state,
   connection,
+  preparing,
   onNodeSelect,
 }: CanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<ChromaFlowNode>([]);
@@ -182,14 +186,18 @@ function CanvasFlow({
     <div className="canvas-shell">
       <div className="canvas-content" data-state={state}>
         {nodes.length === 0 ? (
-          <div className="canvas-empty-state">
-            <svg className="canvas-empty-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-              <path d="m24 3 19 11v20L24 45 5 34V14L24 3Z" stroke="currentColor" strokeWidth="1.2" />
-              <path d="m24 12 11 6v12l-11 6-11-6V18l11-6Z" stroke="currentColor" strokeWidth="1" />
-            </svg>
-            <p>Type a brief and press Run.</p>
-            <span>The graph will appear here as agents fire.</span>
-          </div>
+          preparing ? (
+            <RunStarting />
+          ) : (
+            <div className="canvas-empty-state">
+              <svg className="canvas-empty-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+                <path d="m24 3 19 11v20L24 45 5 34V14L24 3Z" stroke="currentColor" strokeWidth="1.2" />
+                <path d="m24 12 11 6v12l-11 6-11-6V18l11-6Z" stroke="currentColor" strokeWidth="1" />
+              </svg>
+              <p>Type a brief and press Run.</p>
+              <span>The graph will appear here as agents fire.</span>
+            </div>
+          )
         ) : null}
         {/* Keep attribution hidden for the hackathon demo; production should retain it or use a paid license. */}
         <ReactFlow<ChromaFlowNode, ChromaFlowEdge>

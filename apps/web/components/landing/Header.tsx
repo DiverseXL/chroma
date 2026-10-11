@@ -34,10 +34,10 @@ export function Header() {
       <nav className="header-nav header-nav-right" aria-label="Get started">
         <a
           className="icon-link header-github"
-          href="https://github.com/search?q=Chroma+Banana+Hacks+2026&type=repositories"
+          href="https://github.com/DiverseXL/chroma"
           target="_blank"
           rel="noreferrer"
-          aria-label="Find Chroma on GitHub"
+          aria-label="Chroma on GitHub"
           title="GitHub"
         >
           <svg

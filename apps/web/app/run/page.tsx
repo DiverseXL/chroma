@@ -16,6 +16,7 @@ export default function RunPage() {
   const [canvasState, setCanvasState] = useState<CanvasState>("steady");
   const [recentRefreshKey, setRecentRefreshKey] = useState(0);
   const [isDemoRun, setIsDemoRun] = useState(false);
+  const [startRequested, setStartRequested] = useState(false);
 
   const selectedNode = useMemo(
     () => stream.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -34,16 +35,22 @@ export default function RunPage() {
   const startRun = useCallback(
     async (brief: string) => {
       stream.clearError();
-      const runId = await stream.createRun(brief);
-      window.history.replaceState(
-        {},
-        "",
-        `/run?id=${encodeURIComponent(runId)}`,
-      );
-      setIsDemoRun(false);
-      setSelectedNodeId(null);
-      setCanvasState("steady");
-      setRecentRefreshKey((key) => key + 1);
+      setStartRequested(true);
+      try {
+        const runId = await stream.createRun(brief);
+        window.history.replaceState(
+          {},
+          "",
+          `/run?id=${encodeURIComponent(runId)}`,
+        );
+        setIsDemoRun(false);
+        setSelectedNodeId(null);
+        setCanvasState("steady");
+        setRecentRefreshKey((key) => key + 1);
+      } catch (cause) {
+        setStartRequested(false);
+        throw cause;
+      }
     },
     [stream],
   );
@@ -51,6 +58,7 @@ export default function RunPage() {
   const selectRun = useCallback(
     async (runId: string) => {
       if (runId === stream.run?.id) return;
+      setStartRequested(false);
       setCanvasState("exiting");
       await new Promise((resolve) => window.setTimeout(resolve, 160));
       setSelectedNodeId(null);
@@ -97,6 +105,20 @@ export default function RunPage() {
     }
   }, [runStatus]);
 
+  useEffect(() => {
+    if (stream.nodes.length > 0 || stream.error) {
+      setStartRequested(false);
+    }
+  }, [stream.error, stream.nodes.length]);
+
+  const preparing =
+    startRequested &&
+    stream.nodes.length === 0 &&
+    stream.error === null &&
+    (stream.run === null ||
+      stream.run.status === "PENDING" ||
+      stream.run.status === "RUNNING");
+
   return (
     <main className="run-layout">
       <Sidebar
@@ -138,6 +160,7 @@ export default function RunPage() {
           flashSucceeded={stream.flashSucceeded}
           state={canvasState}
           connection={stream.connection}
+          preparing={preparing}
           onNodeSelect={setSelectedNodeId}
         />
         <Inspector
