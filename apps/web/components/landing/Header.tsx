@@ -18,18 +18,15 @@ export function Header() {
   return (
     <header className="site-header" data-scrolled={scrolled}>
       <nav className="header-nav header-nav-left" aria-label="Main navigation">
-        <a className="nav-link" href="#how-it-works">
+        <Link className="nav-link" href="/how-it-works">
           How it works
-        </a>
-        <a className="nav-link" href="#method">
-          Method
-        </a>
+        </Link>
       </nav>
 
-      <a className="brand" href="#top" aria-label="Chroma home">
+      <Link className="brand" href="/" aria-label="Chroma home">
         <BrandMark size={24} gradientId="chroma-brand-gradient" />
         <span>Chroma</span>
-      </a>
+      </Link>
 
       <nav className="header-nav header-nav-right" aria-label="Get started">
         <a
