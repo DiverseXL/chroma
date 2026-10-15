@@ -412,6 +412,51 @@ describe("GoogleGeminiAdapter", () => {
     vi.restoreAllMocks();
   });
 
+  // --- 20s request budget aborts hung requests ---
+
+  it("aborts a hung request after the 20s budget and reports it as a rate-limit error", async () => {
+    vi.useFakeTimers();
+    try {
+      // The mock fetch never resolves; it only rejects when the adapter's
+      // AbortController fires, exactly like a real hung socket would.
+      fetchMock.mockImplementation(
+        (_url: unknown, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(
+                Object.assign(new Error("The operation was aborted"), {
+                  name: "AbortError",
+                }),
+              );
+            });
+          }),
+      );
+
+      const adapter = new GoogleGeminiAdapter();
+      const pending = adapter.completeText({ prompt: "hello" });
+      const expectation = expect(pending).rejects.toBeInstanceOf(
+        ProviderRateLimitError,
+      );
+
+      // Three models in the chain, each request aborted at exactly 20s, so
+      // the whole call fails after 60s of fake time instead of hanging for
+      // the 5.5 minutes undici's default headersTimeout allows.
+      await vi.advanceTimersByTimeAsync(20_000);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await expectation;
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(calledPaths()).toEqual([
+        `/v1beta/models/${TEXT_MODEL}:generateContent`,
+        "/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "/v1beta/models/gemini-3.5-flash:generateContent",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // --- 401 throws ProviderError code unauthorized ---
 
   it("401 throws ProviderError with code unauthorized", async () => {

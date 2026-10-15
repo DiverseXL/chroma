@@ -616,6 +616,42 @@ function isPlannerRateLimit(error: unknown): boolean {
   );
 }
 
+/**
+ * Hard wall-clock budget for the whole two-stage planner. A hung provider
+ * call (or a chain of retries that never resolves) must not block the run
+ * indefinitely: after 90s the planner gives up and the deterministic
+ * storyboard fallback below takes over.
+ */
+export const PLAN_TIMEOUT_MS = 90_000;
+
+function isPlanTimeout(error: unknown): boolean {
+  return error instanceof Error && error.message === "plan_timeout";
+}
+
+/**
+ * Races an async planner run against PLAN_TIMEOUT_MS.
+ *
+ * @param run The planner work to bound.
+ * @returns The planner result when it settles within the budget.
+ * @throws {Error} With message "plan_timeout" when the budget elapses first.
+ */
+async function withPlanBudget<T>(run: () => Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("plan_timeout")),
+      PLAN_TIMEOUT_MS,
+    );
+  });
+  try {
+    // Promise.race subscribes to both promises, so the abandoned planner
+    // promise can never surface an unhandled rejection after the budget wins.
+    return await Promise.race([run(), budget]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function collectMetadata(metadata: unknown): Array<Record<string, unknown>> {
   return typeof metadata === "object" && metadata !== null
     ? [metadata as Record<string, unknown>]
@@ -851,61 +887,63 @@ export async function executePlan(
       : undefined;
 
   try {
-    const bibleResult = await ctx.providers.text.completeText({
-      system: STORY_BIBLE_SYSTEM_PROMPT,
-      prompt:
-        `Creative brief:\n${briefText}` +
-        (requestedPanelCount
-          ? `\n\nUse exactly ${requestedPanelCount} panels.`
-          : ""),
-      json: true,
-      temperature: 0.3,
+    const graph = await withPlanBudget(async () => {
+      const bibleResult = await ctx.providers.text.completeText({
+        system: STORY_BIBLE_SYSTEM_PROMPT,
+        prompt:
+          `Creative brief:\n${briefText}` +
+          (requestedPanelCount
+            ? `\n\nUse exactly ${requestedPanelCount} panels.`
+            : ""),
+        json: true,
+        temperature: 0.3,
+      });
+      const bible = parseStoryBible(bibleResult.parsed);
+      bible.panelCount = inferPanelCount(briefText, requestedPanelCount ?? bible.panelCount);
+
+      // Call A — Beat Extraction: enumerate the distinct moments first.
+      const { beats, metadatas: beatMetadatas } = await extractBeats(
+        ctx,
+        briefText,
+        bible.panelCount,
+        bible.overallArc,
+      );
+
+      // Call B — Panel Prompt Writer: one call per panel, in parallel.
+      const panelResults = await Promise.all(
+        beats.map((beat) => writePanelPrompt(ctx, beat, beats, bible, briefText)),
+      );
+      const scenes = panelResults.map(({ scene }) => scene);
+
+      const providerMetadata = [
+        bibleResult.metadata,
+        ...beatMetadatas,
+        ...panelResults.flatMap(({ metadatas }) => metadatas),
+      ].filter(
+        (entry): entry is Record<string, unknown> =>
+          typeof entry === "object" && entry !== null,
+      );
+      const servedModels = [
+        ...new Set(
+          providerMetadata
+            .map((entry) => entry.model)
+            .filter((model): model is string => typeof model === "string"),
+        ),
+      ];
+      const metadata: Record<string, unknown> = {};
+      if (servedModels.length > 0) {
+        metadata.model = servedModels[0];
+        if (servedModels.length > 1) metadata.models = servedModels;
+      }
+      if (providerMetadata.some((entry) => entry.fallback === true)) {
+        metadata.fallback = true;
+      }
+      return buildStoryboard(bible, scenes, metadata);
     });
-    const bible = parseStoryBible(bibleResult.parsed);
-    bible.panelCount = inferPanelCount(briefText, requestedPanelCount ?? bible.panelCount);
-
-    // Call A — Beat Extraction: enumerate the distinct moments first.
-    const { beats, metadatas: beatMetadatas } = await extractBeats(
-      ctx,
-      briefText,
-      bible.panelCount,
-      bible.overallArc,
-    );
-
-    // Call B — Panel Prompt Writer: one call per panel, in parallel.
-    const panelResults = await Promise.all(
-      beats.map((beat) => writePanelPrompt(ctx, beat, beats, bible, briefText)),
-    );
-    const scenes = panelResults.map(({ scene }) => scene);
-
-    const providerMetadata = [
-      bibleResult.metadata,
-      ...beatMetadatas,
-      ...panelResults.flatMap(({ metadatas }) => metadatas),
-    ].filter(
-      (entry): entry is Record<string, unknown> =>
-        typeof entry === "object" && entry !== null,
-    );
-    const servedModels = [
-      ...new Set(
-        providerMetadata
-          .map((entry) => entry.model)
-          .filter((model): model is string => typeof model === "string"),
-      ),
-    ];
-    const metadata: Record<string, unknown> = {};
-    if (servedModels.length > 0) {
-      metadata.model = servedModels[0];
-      if (servedModels.length > 1) metadata.models = servedModels;
-    }
-    if (providerMetadata.some((entry) => entry.fallback === true)) {
-      metadata.fallback = true;
-    }
-    const graph = buildStoryboard(bible, scenes, metadata);
     compileGraph(graph);
     return graph;
   } catch (error) {
-    if (!isPlannerRateLimit(error)) throw error;
+    if (!isPlanTimeout(error) && !isPlannerRateLimit(error)) throw error;
     const bible = buildFallbackStoryBible(
       briefText,
       inferPanelCount(briefText, requestedPanelCount),
@@ -913,7 +951,7 @@ export async function executePlan(
     const scenes = buildFallbackScenes(bible, briefText);
     const graph = buildStoryboard(bible, scenes, {
       fallback: true,
-      reason: "planner_rate_limited",
+      reason: isPlanTimeout(error) ? "planner_timeout" : "planner_rate_limited",
     });
     compileGraph(graph);
     return graph;

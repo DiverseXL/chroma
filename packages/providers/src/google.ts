@@ -35,6 +35,8 @@ import {
   type ScoreImageRequest,
 } from "@chroma/core";
 
+import { fetchWithTimeout, isTransientNetworkError } from "./http.js";
+
 /**
  * Base URL for the Google Gemini generateContent REST endpoint.
  * Source: https://ai.google.dev/api/generate-content (A7)
@@ -217,7 +219,7 @@ async function callGenerateContent(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetchWithTimeout(url, {
       method: "POST",
       headers: {
         "x-goog-api-key": apiKey,
@@ -226,10 +228,15 @@ async function callGenerateContent(
       body: JSON.stringify(requestBody),
     });
   } catch (cause) {
-    throw new ProviderError(
-      `Google API network request failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-      { cause, code: "network" },
-    );
+    const message = `Google API network request failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    // Transient network faults (20s budget abort, undici headers/body
+    // timeouts, socket errors) map to ProviderRateLimitError so they follow
+    // the same fallback chain as 429/503 and reach the planner's
+    // deterministic storyboard instead of failing the run.
+    if (isTransientNetworkError(cause)) {
+      throw new ProviderRateLimitError(message);
+    }
+    throw new ProviderError(message, { cause, code: "network" });
   }
 
   let body: unknown;
@@ -254,7 +261,9 @@ async function callGenerateContent(
  *   times (1s/2s/4s), logging a dev-only warning line, then the chain
  *   advances to the next model.
  * - 429 quota / 404 retired model: advance to the next model immediately.
- * - Anything else (401/400/network/malformed): thrown unchanged, no retry.
+ * - Transient network faults (20s budget abort, socket/DNS errors): mapped
+ *   to ProviderRateLimitError, which also advances the chain immediately.
+ * - Anything else (401/400/malformed): thrown unchanged, no retry.
  *
  * When every model is exhausted the last error is rethrown as a
  * ProviderRateLimitError so upstream fallbacks (planner's deterministic

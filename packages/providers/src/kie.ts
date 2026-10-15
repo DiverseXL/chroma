@@ -24,6 +24,8 @@ import {
   type ProviderAdapter,
 } from "@chroma/core";
 
+import { fetchWithTimeout, isTransientNetworkError } from "./http.js";
+
 /**
  * Documented default base URL (docs/provider-facts.md K1).
  */
@@ -120,7 +122,9 @@ function sleep(ms: number): Promise<void> {
  * @param url Absolute request URL.
  * @param init Fetch init options.
  * @returns The HTTP status and the parsed (or empty) JSON body.
- * @throws {ProviderError} With code "network" when fetch itself rejects.
+ * @throws {ProviderRateLimitError} When the request hits a transient network
+ *         fault (20s budget abort, socket/DNS errors).
+ * @throws {ProviderError} With code "network" for other fetch rejections.
  */
 async function requestJson(
   url: string,
@@ -128,14 +132,15 @@ async function requestJson(
 ): Promise<{ status: number; body: KieBody }> {
   let response: Response;
   try {
-    response = await fetch(url, init);
+    response = await fetchWithTimeout(url, init);
   } catch (cause) {
-    throw new ProviderError(
-      `KIE request failed: ${
-        cause instanceof Error ? cause.message : String(cause)
-      }`,
-      { cause, code: "network" },
-    );
+    const message = `KIE request failed: ${
+      cause instanceof Error ? cause.message : String(cause)
+    }`;
+    if (isTransientNetworkError(cause)) {
+      throw new ProviderRateLimitError(message);
+    }
+    throw new ProviderError(message, { cause, code: "network" });
   }
 
   const text = await response.text().catch(() => "");
@@ -240,21 +245,24 @@ function sniffMimeType(bytes: Uint8Array): string {
  *
  * @param url The image URL.
  * @returns The bytes on HTTP 200, or undefined plus the status on failure.
- * @throws {ProviderError} With code "network" when fetch itself rejects.
+ * @throws {ProviderRateLimitError} When the download hits a transient network
+ *         fault (20s budget abort, socket/DNS errors).
+ * @throws {ProviderError} With code "network" for other fetch rejections.
  */
 async function tryDownload(
   url: string,
 ): Promise<{ bytes?: Uint8Array; status: number }> {
   let response: Response;
   try {
-    response = await fetch(url);
+    response = await fetchWithTimeout(url, {});
   } catch (cause) {
-    throw new ProviderError(
-      `KIE image download failed: ${
-        cause instanceof Error ? cause.message : String(cause)
-      }`,
-      { cause, code: "network" },
-    );
+    const message = `KIE image download failed: ${
+      cause instanceof Error ? cause.message : String(cause)
+    }`;
+    if (isTransientNetworkError(cause)) {
+      throw new ProviderRateLimitError(message);
+    }
+    throw new ProviderError(message, { cause, code: "network" });
   }
 
   if (!response.ok) {

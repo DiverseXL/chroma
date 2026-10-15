@@ -75,6 +75,36 @@ describe("executePlan rate-limit fallback", () => {
   });
 });
 
+describe("executePlan planner budget", () => {
+  it("falls back to the deterministic storyboard when the planner exceeds its 90s budget", async () => {
+    vi.useFakeTimers();
+    try {
+      // The text provider never settles: no rejection, no resolution.
+      const completeText = vi.fn(() => new Promise<never>(() => {}));
+      const context = {
+        providers: { text: { completeText } },
+      } as unknown as ExecutionContext;
+
+      const pending = executePlan("A two-panel storyboard", context);
+      const expectation = expect(pending).resolves.toMatchObject({
+        metadata: { fallback: true, reason: "planner_timeout" },
+      });
+
+      // The planner races a 90_000ms budget; advancing fake time past it
+      // must produce the deterministic fallback graph, not a hung run.
+      await vi.advanceTimersByTimeAsync(90_000);
+      await expectation;
+
+      const graph = await pending;
+      expect(completeText).toHaveBeenCalledTimes(1);
+      expect(graph.nodes.filter((node) => node.kind === "PLAN")).toHaveLength(1);
+      expect(() => compileGraph(graph)).not.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 const ASTRONAUT_BIBLE = {
   panelCount: 2,
   characters: [
