@@ -131,7 +131,7 @@ describe("KIEAdapter", () => {
       string,
       RequestInit,
     ];
-    expect(createUrl).toBe("https://api.kie.ai/api/v1/jobs/createTask");
+    expect(new URL(createUrl).pathname).toBe("/api/v1/jobs/createTask");
     expect(createInit.method).toBe("POST");
     expect(createInit.headers).toEqual({
       Authorization: `Bearer ${API_KEY}`,
@@ -150,8 +150,9 @@ describe("KIEAdapter", () => {
       string,
       RequestInit,
     ];
-    expect(pollUrl).toBe(
-      "https://api.kie.ai/api/v1/jobs/recordInfo?taskId=task-1",
+    const pollTarget = new URL(pollUrl);
+    expect(`${pollTarget.pathname}${pollTarget.search}`).toBe(
+      "/api/v1/jobs/recordInfo?taskId=task-1",
     );
     expect(pollInit.headers).toEqual({
       Authorization: `Bearer ${API_KEY}`,
@@ -321,7 +322,7 @@ describe("KIEAdapter", () => {
       await adapter.generateImage({ prompt: "a red fox", width, height });
 
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe("https://api.kie.ai/api/v1/jobs/createTask");
+      expect(new URL(url).pathname).toBe("/api/v1/jobs/createTask");
       const body = JSON.parse(String(init.body)) as {
         input: { aspect_ratio: string; resolution: string };
       };

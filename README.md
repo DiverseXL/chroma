@@ -66,6 +66,16 @@ KIE_MODEL · model
 POLLINATIONS_API_KEY · probe
 ```
 
+## Try it
+
+Start a run with a brief that names each panel's moment:
+
+```text
+A 2-panel storyboard: panel 1 shows a wide shot of an apple tree in an autumn orchard at golden hour, panel 2 shows a single apple detaching from a branch and falling mid-air.
+```
+
+> *For best results, describe each panel's moment explicitly. The planner handles "then" transitions, but naming the action and the camera for each panel produces sharper output.*
+
 ## Design decisions
 
 - Prefix node IDs with the run ID; Prisma stores them as globally unique primary keys.

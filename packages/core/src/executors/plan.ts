@@ -31,30 +31,81 @@ Return strict JSON matching this schema:
 Every field must be specific and concrete. No placeholder text. If the brief
 is vague, make confident choices that fit its tone. Return only JSON.`;
 
-const SCENE_PLANNER_SYSTEM_PROMPT = `You are the Scene Planner in Chroma. You are planning panel {panelIndex} of
-{totalPanelCount} panels. The overall arc is: {overallArc}. Panels already
-planned: {previousScenes}. Your panel must depict the NEXT distinct moment in
-the arc, not a repeat of a previous panel. Each panel should show visible
-progression.
+const BEAT_EXTRACTOR_SYSTEM_PROMPT = `You are the Story Beat Extractor for Chroma. Read the creative brief.
+Identify the distinct visual beats the brief describes, in order. A beat
+is one moment in time that a single image can depict.
 
-Given the Story Bible and this panel's position in the arc, describe what
-happens in this specific panel.
+Rules:
+- If the brief describes an action (falling, running, walking, rising,
+  drifting, jumping, opening, closing, melting, arriving, leaving), that
+  action IS a beat. Do not merge it with its setup.
+- If the brief describes a before/after or then/next transition, the before
+  and after are separate beats.
+- Beats must be visually distinct. Two panels should not show the same
+  subject in the same pose with only minor variation.
 
-Return strict JSON matching this schema:
-{
-  panelIndex: number,
-  sceneDescription: string (one sentence of what happens),
-  subject: string (who or what is the focus),
-  action: string (what is happening),
-  cameraAngle: string (wide / medium / close-up / establishing / etc),
-  prompt: string (a complete image-generation prompt, at least 25 words,
-                  that inherits every aspect of the visualStyle from the bible
-                  and describes this specific panel's scene. No bullet points.
-                  No placeholder text.)
-}
+Return strict JSON:
+{ beats: [{ index: number, description: string, actionVerb: string | null,
+            subject: string, stage: 'setup' | 'action' | 'aftermath' }] }
 
-The prompt must be specific enough that an image model produces a coherent
-panel without seeing the bible. Return only JSON.`;
+actionVerb is the specific verb if the beat is an action, null otherwise.
+Return only JSON.`;
+
+const PANEL_PROMPT_WRITER_SYSTEM = `You are the Panel Prompt Writer for Chroma. Write a single detailed image generation prompt for panel {panelIndex}. The panel must depict beat {panelIndex} exactly.
+
+Rules:
+- If the beat has actionVerb, the prompt MUST contain that verb or a clear synonym. 'an apple falling' must contain 'falling' or 'mid-fall' or 'detached, falling'. It must NOT say 'hanging' or 'on the branch'.
+- If the beat is 'setup', the prompt should show the scene BEFORE the action.
+- If the beat is 'action', the prompt should show the subject mid-action, with visible motion cues (position, blur, posture, gravity).
+- If the beat is 'aftermath', the prompt should show the result.
+- Do NOT reuse phrasing from other panels. Each prompt must describe a visually distinct moment.
+- Prompt must be at least 30 words.
+- Inherit every visualStyle field from the Story Bible.
+
+Return strict JSON: { prompt: string }`;
+
+/**
+ * Motion verbs accepted as evidence that a panel prompt depicts its beat's
+ * action. A prompt that contains none of these (and none of the beat's own
+ * actionVerb) is treated as depicting the setup instead of the action and is
+ * rewritten once by the Panel Prompt Writer.
+ */
+export const MOTION_VERBS = [
+  "fall",
+  "falling",
+  "run",
+  "running",
+  "walk",
+  "walking",
+  "rise",
+  "rising",
+  "drift",
+  "drifting",
+  "jump",
+  "jumping",
+  "open",
+  "opening",
+  "close",
+  "closing",
+  "melt",
+  "melting",
+  "arrive",
+  "arriving",
+  "leave",
+  "leaving",
+  "detach",
+  "detached",
+  "plunge",
+  "plunging",
+  "cascade",
+  "descend",
+  "descending",
+];
+
+/** Minimum word count enforced on a Panel Prompt Writer response. */
+const MIN_PANEL_PROMPT_WORDS = 30;
+
+const BEAT_STAGES = new Set(["setup", "action", "aftermath"]);
 
 export interface StoryBible {
   panelCount: number;
@@ -77,6 +128,21 @@ export interface StoryBible {
     era: string;
   };
   overallArc: string;
+}
+
+/** When in the arc a beat occurs. */
+export type BeatStage = "setup" | "action" | "aftermath";
+
+/**
+ * One distinct visual moment extracted from the creative brief.
+ * Exactly one beat maps to one panel.
+ */
+export interface StoryBeat {
+  index: number;
+  description: string;
+  actionVerb: string | null;
+  subject: string;
+  stage: BeatStage;
 }
 
 export interface ScenePlan {
@@ -145,30 +211,149 @@ function parseStoryBible(value: unknown): StoryBible {
   return value as unknown as StoryBible;
 }
 
-function parseScenePlan(value: unknown, panelIndex: number): ScenePlan {
+/**
+ * Validates the Beat Extraction (Call A) response.
+ *
+ * @param value Parsed JSON returned by the beat extractor.
+ * @returns Beats sorted by their declared index.
+ * @throws {ProviderError} When the payload is missing or any beat is malformed.
+ */
+function parseBeats(value: unknown): StoryBeat[] {
   if (
     !isRecord(value) ||
-    value.panelIndex !== panelIndex ||
-    !nonEmptyString(value.sceneDescription) ||
-    !nonEmptyString(value.subject) ||
-    !nonEmptyString(value.action) ||
-    !nonEmptyString(value.cameraAngle) ||
-    !nonEmptyString(value.prompt) ||
-    value.prompt.trim().split(/\s+/).length < 25
+    !Array.isArray(value.beats) ||
+    value.beats.length === 0
   ) {
-    throw new ProviderError(
-      `Scene Planner returned an incomplete scene plan for panel ${panelIndex}`,
-      { code: "planner_output_invalid" },
-    );
+    throw new ProviderError("Story Beat Extractor returned no beats", {
+      code: "planner_output_invalid",
+    });
   }
 
+  const beats: StoryBeat[] = [];
+  for (const entry of value.beats) {
+    if (
+      !isRecord(entry) ||
+      !Number.isInteger(entry.index) ||
+      !nonEmptyString(entry.description) ||
+      !nonEmptyString(entry.subject) ||
+      !(entry.actionVerb === null || nonEmptyString(entry.actionVerb)) ||
+      !nonEmptyString(entry.stage) ||
+      !BEAT_STAGES.has(entry.stage)
+    ) {
+      throw new ProviderError("Story Beat Extractor returned an invalid beat", {
+        code: "planner_output_invalid",
+      });
+    }
+    beats.push({
+      index: Number(entry.index),
+      description: entry.description.trim(),
+      actionVerb:
+        entry.actionVerb === null ? null : entry.actionVerb.trim(),
+      subject: entry.subject.trim(),
+      stage: entry.stage as BeatStage,
+    });
+  }
+
+  return beats.sort((a, b) => a.index - b.index);
+}
+
+/**
+ * Extracts the prompt string from a Panel Prompt Writer response.
+ *
+ * @param value Parsed JSON returned by the writer.
+ * @returns The trimmed prompt, or null when absent or blank.
+ */
+function extractPrompt(value: unknown): string | null {
+  return isRecord(value) && nonEmptyString(value.prompt)
+    ? value.prompt.trim()
+    : null;
+}
+
+/**
+ * Checks whether a prompt depicts its beat's action: it must contain the
+ * beat's own actionVerb (or its stem) or any entry from MOTION_VERBS.
+ *
+ * @param prompt The Panel Prompt Writer prompt.
+ * @param actionVerb The beat's action verb.
+ */
+function promptMentionsAction(prompt: string, actionVerb: string): boolean {
+  const lower = prompt.toLowerCase();
+  const candidates = new Set<string>([
+    ...MOTION_VERBS,
+    actionVerb.toLowerCase(),
+  ]);
+  const stem = actionVerb.toLowerCase().replace(/(?:ing|ed|es|s)$/, "");
+  if (stem.length >= 3) candidates.add(stem);
+  for (const candidate of candidates) {
+    if (new RegExp(`\\b${candidate}\\b`).test(lower)) return true;
+  }
+  return false;
+}
+
+/**
+ * Validates a Panel Prompt Writer response against the beat it must depict.
+ * Each returned error is appended to the one permitted rewrite request.
+ *
+ * @param parsed Parsed JSON returned by the writer.
+ * @param beat The beat this panel must depict.
+ * @returns Empty when the prompt is usable; otherwise one message per violation.
+ */
+function validatePanelPrompt(parsed: unknown, beat: StoryBeat): string[] {
+  const prompt = extractPrompt(parsed);
+  if (!prompt) {
+    return [
+      "Your response did not contain a non-empty 'prompt' string. Return strict JSON: { prompt: string }.",
+    ];
+  }
+
+  const errors: string[] = [];
+  const wordCount = prompt.split(/\s+/).length;
+  if (wordCount < MIN_PANEL_PROMPT_WORDS) {
+    errors.push(
+      `Your previous prompt was ${wordCount} words. Write a prompt of at least ${MIN_PANEL_PROMPT_WORDS} words.`,
+    );
+  }
+  if (beat.actionVerb && !promptMentionsAction(prompt, beat.actionVerb)) {
+    errors.push(
+      `Your previous prompt did not contain the action verb '${beat.actionVerb}'. The panel must depict the action, not the setup. Rewrite it.`,
+    );
+  }
+  return errors;
+}
+
+function cameraForStage(stage: BeatStage): string {
+  switch (stage) {
+    case "setup":
+      return "wide establishing shot";
+    case "action":
+      return "dynamic action shot";
+    case "aftermath":
+      return "medium shot";
+  }
+}
+
+function actionForBeat(beat: StoryBeat): string {
+  if (beat.actionVerb) return `the ${beat.subject} is ${beat.actionVerb}`;
+  if (beat.stage === "setup") {
+    return `the ${beat.subject} is at rest before the action`;
+  }
+  return `the ${beat.subject} is at rest after the action`;
+}
+
+/**
+ * Builds the ScenePlan for a panel from its beat and the validated prompt.
+ *
+ * @param beat The beat this panel depicts.
+ * @param prompt The validated Panel Prompt Writer prompt.
+ */
+function sceneFromBeat(beat: StoryBeat, prompt: string): ScenePlan {
   return {
-    panelIndex,
-    sceneDescription: value.sceneDescription,
-    subject: value.subject,
-    action: value.action,
-    cameraAngle: value.cameraAngle,
-    prompt: value.prompt.trim(),
+    panelIndex: beat.index,
+    sceneDescription: beat.description,
+    subject: beat.subject,
+    action: actionForBeat(beat),
+    cameraAngle: cameraForStage(beat.stage),
+    prompt,
   };
 }
 
@@ -250,27 +435,34 @@ function buildFallbackStoryBible(brief: string, panelCount: number): StoryBible 
   };
 }
 
+function buildFallbackSceneForPanel(
+  bible: StoryBible,
+  brief: string,
+  panelIndex: number,
+): ScenePlan {
+  const nouns = extractBriefNouns(brief);
+  const subject = nouns.length
+    ? nouns[(panelIndex - 1) % nouns.length]
+    : "story subject";
+  const action = `moves through the scene in panel ${panelIndex}`;
+  const { visualStyle } = bible;
+  return {
+    panelIndex,
+    sceneDescription: `${subject} ${action}.`,
+    subject,
+    action,
+    cameraAngle: "wide cinematic view",
+    prompt: `${subject} in ${visualStyle.medium} style, ${visualStyle.palette} palette, ${visualStyle.lighting}, cinematic composition, clearly depicting ${action}.`,
+  };
+}
+
 function buildFallbackScenes(
   bible: StoryBible,
   brief: string,
 ): ScenePlan[] {
-  const nouns = extractBriefNouns(brief);
-  return Array.from({ length: bible.panelCount }, (_, offset) => {
-    const panelIndex = offset + 1;
-    const subject = nouns.length
-      ? nouns[offset % nouns.length]
-      : "story subject";
-    const action = `moves through the scene in panel ${panelIndex}`;
-    const { visualStyle } = bible;
-    return {
-      panelIndex,
-      sceneDescription: `${subject} ${action}.`,
-      subject,
-      action,
-      cameraAngle: "wide cinematic view",
-      prompt: `${subject} in ${visualStyle.medium} style, ${visualStyle.palette} palette, ${visualStyle.lighting}, cinematic composition, clearly depicting ${action}.`,
-    };
-  });
+  return Array.from({ length: bible.panelCount }, (_, offset) =>
+    buildFallbackSceneForPanel(bible, brief, offset + 1),
+  );
 }
 
 function shortSubject(subject: string): string {
@@ -424,6 +616,208 @@ function isPlannerRateLimit(error: unknown): boolean {
   );
 }
 
+function collectMetadata(metadata: unknown): Array<Record<string, unknown>> {
+  return typeof metadata === "object" && metadata !== null
+    ? [metadata as Record<string, unknown>]
+    : [];
+}
+
+/**
+ * Re-indexes beats to a contiguous 1-based sequence so panel N always maps
+ * to beat N regardless of the indexes the extractor returned.
+ */
+function normalizeBeatIndices(beats: StoryBeat[]): StoryBeat[] {
+  return beats.map((beat, offset) => ({ ...beat, index: offset + 1 }));
+}
+
+/**
+ * Reconciles the extracted beat list with the planned panel count.
+ * Trims excess beats; pads a deficit with continuation beats so the run
+ * never drops a panel the Story Bible promised.
+ */
+function alignBeatCount(
+  beats: StoryBeat[],
+  panelCount: number,
+  overallArc: string,
+): StoryBeat[] {
+  if (beats.length >= panelCount) return beats.slice(0, panelCount);
+
+  const padded = [...beats];
+  const lastSubject = beats[beats.length - 1]?.subject ?? "the scene";
+  for (let offset = beats.length; offset < panelCount; offset++) {
+    padded.push({
+      index: offset + 1,
+      description: `The story continues: ${overallArc}`,
+      actionVerb: null,
+      subject: lastSubject,
+      stage: "aftermath",
+    });
+  }
+  console.warn(
+    `[plan] Story Beat Extractor returned ${beats.length} beats for ${panelCount} panels; padded ${panelCount - beats.length} beat(s).`,
+  );
+  return padded;
+}
+
+/**
+ * Call A — Beat Extraction.
+ *
+ * Asks the Story Beat Extractor for one distinct beat per panel. A response
+ * with the wrong beat count or an invalid shape is requested once more with
+ * the specific error appended; a second failure raises planner_output_invalid.
+ *
+ * @param ctx Node execution context.
+ * @param briefText The creative brief.
+ * @param panelCount Planned panel count.
+ * @param overallArc The Story Bible arc, as extra context for the extractor.
+ */
+async function extractBeats(
+  ctx: ExecutionContext,
+  briefText: string,
+  panelCount: number,
+  overallArc: string,
+): Promise<{
+  beats: StoryBeat[];
+  metadatas: Array<Record<string, unknown>>;
+}> {
+  const basePrompt =
+    `Creative brief:\n${briefText}\n\n` +
+    `Story Bible overall arc: ${overallArc}\n` +
+    `The storyboard has exactly ${panelCount} panels. Return exactly ` +
+    `${panelCount} beats in order, one beat per panel.`;
+
+  const first = await ctx.providers.text.completeText({
+    system: BEAT_EXTRACTOR_SYSTEM_PROMPT,
+    prompt: basePrompt,
+    json: true,
+    temperature: 0.3,
+  });
+  const metadatas = collectMetadata(first.metadata);
+
+  let parsed: StoryBeat[] | null = null;
+  let failure = "";
+  try {
+    parsed = parseBeats(first.parsed);
+  } catch (error) {
+    failure = error instanceof Error ? error.message : String(error);
+  }
+
+  if (parsed && parsed.length === panelCount) {
+    return { beats: normalizeBeatIndices(parsed), metadatas };
+  }
+
+  const detail = parsed
+    ? `You returned ${parsed.length} beats but the storyboard has exactly ${panelCount} panels.`
+    : failure;
+  const second = await ctx.providers.text.completeText({
+    system: BEAT_EXTRACTOR_SYSTEM_PROMPT,
+    prompt:
+      `${basePrompt}\n\nYour previous response was invalid: ${detail} ` +
+      `Return exactly ${panelCount} beats matching the JSON schema.`,
+    json: true,
+    temperature: 0.3,
+  });
+  metadatas.push(...collectMetadata(second.metadata));
+
+  let retried: StoryBeat[] | null = null;
+  try {
+    retried = parseBeats(second.parsed);
+  } catch {
+    retried = null;
+  }
+  if (!retried) {
+    throw new ProviderError(
+      "Story Beat Extractor returned invalid beats after a retry",
+      { code: "planner_output_invalid" },
+    );
+  }
+
+  return {
+    beats: normalizeBeatIndices(alignBeatCount(retried, panelCount, overallArc)),
+    metadatas,
+  };
+}
+
+/**
+ * Call B — Panel Prompt Writer.
+ *
+ * Writes the image prompt for one beat. A response that fails validation
+ * (missing prompt, too short, or missing the beat's action verb) is requested
+ * once more with the errors appended. If the rewrite still fails the run
+ * continues: the rewrite prompt is used with a logged warning, and a prompt
+ * that is unusable as JSON falls back to a deterministic scene.
+ *
+ * @param ctx Node execution context.
+ * @param beat The beat this panel must depict.
+ * @param beats The full beat list, shown to the writer for context.
+ * @param bible The Story Bible (visual style and fallback material).
+ * @param briefText The creative brief, used by the fallback scene builder.
+ */
+async function writePanelPrompt(
+  ctx: ExecutionContext,
+  beat: StoryBeat,
+  beats: StoryBeat[],
+  bible: StoryBible,
+  briefText: string,
+): Promise<{
+  scene: ScenePlan;
+  metadatas: Array<Record<string, unknown>>;
+}> {
+  const panelIndex = beat.index;
+  const system = PANEL_PROMPT_WRITER_SYSTEM.replaceAll(
+    "{panelIndex}",
+    String(panelIndex),
+  );
+  const basePrompt =
+    `Story Bible visual style:\n${JSON.stringify(bible.visualStyle, null, 2)}\n\n` +
+    `All beats:\n${JSON.stringify(beats, null, 2)}\n\n` +
+    `This panel's beat:\n${JSON.stringify(beat, null, 2)}\n\n` +
+    `Write the prompt for panel ${panelIndex} now.`;
+
+  const metadatas: Array<Record<string, unknown>> = [];
+
+  const first = await ctx.providers.text.completeText({
+    system,
+    prompt: basePrompt,
+    json: true,
+    temperature: 0.5,
+  });
+  metadatas.push(...collectMetadata(first.metadata));
+
+  const firstPrompt = extractPrompt(first.parsed);
+  const firstErrors = validatePanelPrompt(first.parsed, beat);
+  if (firstPrompt && firstErrors.length === 0) {
+    return { scene: sceneFromBeat(beat, firstPrompt), metadatas };
+  }
+
+  const second = await ctx.providers.text.completeText({
+    system,
+    prompt: `${basePrompt}\n\n${firstErrors.join("\n\n")}`,
+    json: true,
+    temperature: 0.5,
+  });
+  metadatas.push(...collectMetadata(second.metadata));
+
+  const secondPrompt = extractPrompt(second.parsed);
+  if (!secondPrompt) {
+    console.warn(
+      `[plan] Panel ${panelIndex} prompt writer returned no usable prompt after retry; using a deterministic fallback scene.`,
+    );
+    return {
+      scene: buildFallbackSceneForPanel(bible, briefText, panelIndex),
+      metadatas,
+    };
+  }
+
+  const secondErrors = validatePanelPrompt(second.parsed, beat);
+  if (secondErrors.length > 0) {
+    console.warn(
+      `[plan] Panel ${panelIndex} prompt still fails validation after retry (${secondErrors.join(" | ")}); using the retry prompt.`,
+    );
+  }
+  return { scene: sceneFromBeat(beat, secondPrompt), metadatas };
+}
+
 export interface PlanInput {
   brief?: string;
   panelCount?: number;
@@ -470,48 +864,24 @@ export async function executePlan(
     const bible = parseStoryBible(bibleResult.parsed);
     bible.panelCount = inferPanelCount(briefText, requestedPanelCount ?? bible.panelCount);
 
-    const sceneResults: Array<{
-      scene: ScenePlan;
-      metadata?: Record<string, unknown>;
-    }> = [];
-    for (let offset = 0; offset < bible.panelCount; offset++) {
-      const panelIndex = offset + 1;
-      const previousScenes =
-        sceneResults.length === 0
-          ? "None; this is the opening moment of the arc."
-          : sceneResults
-              .map(
-                ({ scene }) =>
-                  `Panel ${scene.panelIndex}: ${scene.sceneDescription}`,
-              )
-              .join("\n");
-      const system = SCENE_PLANNER_SYSTEM_PROMPT.replaceAll(
-        "{panelIndex}",
-        String(panelIndex),
-      )
-        .replaceAll("{totalPanelCount}", String(bible.panelCount))
-        .replace("{overallArc}", bible.overallArc)
-        .replace("{previousScenes}", previousScenes);
-      const result = await ctx.providers.text.completeText({
-        system,
-        prompt:
-          `Story Bible:\n${JSON.stringify(bible)}\n\n` +
-          `Panel index: ${panelIndex}\nTotal panel count: ${bible.panelCount}\n` +
-          `Overall arc: ${bible.overallArc}\n` +
-          `Panels already planned:\n${previousScenes}`,
-        json: true,
-        temperature: 0.5,
-      });
-      sceneResults.push({
-        scene: parseScenePlan(result.parsed, panelIndex),
-        metadata: result.metadata,
-      });
-    }
+    // Call A — Beat Extraction: enumerate the distinct moments first.
+    const { beats, metadatas: beatMetadatas } = await extractBeats(
+      ctx,
+      briefText,
+      bible.panelCount,
+      bible.overallArc,
+    );
 
-    const scenes = sceneResults.map(({ scene }) => scene);
+    // Call B — Panel Prompt Writer: one call per panel, in parallel.
+    const panelResults = await Promise.all(
+      beats.map((beat) => writePanelPrompt(ctx, beat, beats, bible, briefText)),
+    );
+    const scenes = panelResults.map(({ scene }) => scene);
+
     const providerMetadata = [
       bibleResult.metadata,
-      ...sceneResults.map(({ metadata: sceneMetadata }) => sceneMetadata),
+      ...beatMetadatas,
+      ...panelResults.flatMap(({ metadatas }) => metadatas),
     ].filter(
       (entry): entry is Record<string, unknown> =>
         typeof entry === "object" && entry !== null,

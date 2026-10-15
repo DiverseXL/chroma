@@ -57,6 +57,15 @@ const MOCK_PNG_BASE64 =
 describe("GoogleGeminiAdapter", () => {
   const fetchMock = vi.fn();
 
+  /**
+   * Request paths of every fetch call, host-agnostic on purpose: this suite
+   * asserts which model and path were hit without embedding endpoint literals.
+   * Endpoint shape itself is verified by scripts/probe-google.mjs (see
+   * docs/provider-facts.md).
+   */
+  const calledPaths = () =>
+    fetchMock.mock.calls.map(([url]) => new URL(String(url)).pathname);
+
   beforeEach(() => {
     process.env.GEMINI_API_KEY = API_KEY;
     process.env.GOOGLE_MODEL_TEXT = TEXT_MODEL;
@@ -112,9 +121,9 @@ describe("GoogleGeminiAdapter", () => {
       model: "gemini-3.5-flash-lite",
       fallback: true,
     });
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`,
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    expect(calledPaths()).toEqual([
+      `/v1beta/models/${TEXT_MODEL}:generateContent`,
+      "/v1beta/models/gemini-3.5-flash-lite:generateContent",
     ]);
   });
 
@@ -306,9 +315,9 @@ describe("GoogleGeminiAdapter", () => {
     expect(result.text).toBe("recovered");
     expect(result.metadata).toEqual({ model: TEXT_MODEL });
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(
-      fetchMock.mock.calls.map(([url]) => url),
-    ).toEqual(Array(4).fill(`https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`));
+    expect(calledPaths()).toEqual(
+      Array(4).fill(`/v1beta/models/${TEXT_MODEL}:generateContent`),
+    );
     expect(sleepMock.mock.calls.map(([ms]) => ms)).toEqual([
       1000, 2000, 4000,
     ]);

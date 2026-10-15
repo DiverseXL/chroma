@@ -169,6 +169,30 @@ function selectCannedJson(system = "", prompt = ""): unknown {
   if (lower.includes("story architect")) {
     return CANNED_JSON.storyBible;
   }
+  if (lower.includes("story beat extractor")) {
+    const parsedCount = Number(prompt.match(/exactly (\d+) panels?/i)?.[1]);
+    const panelCount =
+      Number.isInteger(parsedCount) && parsedCount >= 1 ? parsedCount : 4;
+    return {
+      beats: Array.from({ length: panelCount }, (_, offset) => ({
+        index: offset + 1,
+        description: `Distinct story beat ${offset + 1} of the storyboard arc`,
+        actionVerb: null,
+        subject: `Traveler scene ${offset + 1}`,
+        stage: "setup",
+      })),
+    };
+  }
+  if (lower.includes("panel prompt writer")) {
+    return {
+      prompt:
+        "A traveler stands at the edge of a wide cinematic landscape under " +
+        "golden hour light, warm amber tones and deep indigo shadows " +
+        "stretching across the scene, digital painting finish with a shallow " +
+        "depth of field, atmospheric and melancholic mood, every detail crisp " +
+        "and deliberate.",
+    };
+  }
   if (lower.includes("scene planner")) {
     const panelIndex = Number(prompt.match(/Panel index:\s*(\d+)/i)?.[1] ?? 1);
     const panelCount = Number(
